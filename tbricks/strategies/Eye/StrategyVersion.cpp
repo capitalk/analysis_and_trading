@@ -1,0 +1,1 @@
+#include "version/StrategyVersion.inl"
