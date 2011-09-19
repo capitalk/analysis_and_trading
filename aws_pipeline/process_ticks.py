@@ -107,12 +107,10 @@ if __name__ == "__main__":
             if options.debug is True:
                 print "Move tick files returned: ", code, string
             
-            print extractOK, moveOK
             if extractOK and moveOK:
                 qin.delete_message(m)
                 retrys = 0
                 
-                 
         else:
             time.sleep(retry_wait)
             retrys += 1

@@ -2,7 +2,7 @@
 """Start feature extraction jobs on AWS for processing into hdf files.
 
 Usage:
-run_instances.py <filename or directory> 
+run_instances.py <filename or directory> -a AWS image name -n number of instances [-o output queue] [-i input queue] 
 
 """
 import os
@@ -46,60 +46,57 @@ else:
 # Feature output directory - MUST HAVE TRAILING SLASH
 FEATURE_DIR=EPHEMERAL0+"features/"
 
-def start_intances(ec2cxn, instance_count):
-    images = ec2cxn.get_all_images(owners="self")
+SECURITY_GROUPS = ['capk']
+
+def start_instances(ec2cxn, instance_count, image_id):
+    #images = ec2cxn.get_all_images(owners="self")
     #print "Found ", len(images) , " images"
-    if len(images) == 1:
-        image = images[0]
-        print "Using image: ", image.name, image.id
-        secGroups = ["capk"]
-        print "Starting ", instance_count, " instances"
-        
-        if USE_EPHEMERAL:
-            map = BlockDeviceMapping()
-            sdb1 = BlockDeviceType()
-            sdb1.ephemeral_name = 'ephemeral0'
-            map['/dev/sdb1'] = sdb1
-            reservation = ec2cxn.run_instances(image.id, min_count=1, max_count=instance_count, block_device_map=map, security_groups=secGroups, key_name="capk", instance_type="c1.xlarge")
-        else:
-            reservation = ec2cxn.run_instances(image.id, min_count=1, max_count=instance_count, security_groups=secGroups, key_name="capk", instance_type="c1.xlarge")
-
-        instances = reservation.instances
-        return instances
+    #if len(images) == 1:
+        #image = images[0]
+        #print "Using image: ", image.name, image.id
+        #print "Starting ", instance_count, " instances"
+    print "Attempting to start ", instance_count, " instances of image: ", image_id     
+    if USE_EPHEMERAL:
+        map = BlockDeviceMapping()
+        sdb1 = BlockDeviceType()
+        sdb1.ephemeral_name = 'ephemeral0'
+        map['/dev/sdb1'] = sdb1
+        reservation = ec2cxn.run_instances(image_id, min_count=1, max_count=instance_count, block_device_map=map, security_groups=SECURITY_GROUPS, key_name="capk", instance_type="c1.xlarge")
     else:
-        print "More than one image exists - exiting"
-        sys.exit(2)
+        reservation = ec2cxn.run_instances(image_id, min_count=1, max_count=instance_count, security_groups=SECURITY_GROUPS, key_name="capk", instance_type="c1.xlarge")
+
+    instances = reservation.instances
+    if len(instances) == instance_count:
+        print "Started ", instance_count, " instances"
+    
+    return instances
+
+    #else:
+    #    print "More than one image exists - exiting"
+    #    sys.exit(2)
     
     
 
-def main(files, inqueue, outqueue, instance_count):
+def main(args, inqueue, outqueue, instance_count, image_id):
     s3cxn = boto.connect_s3()
     if s3cxn is None:
         print "s3 connection failed"
         raise Error("s3 connection failed")
     ec2cxn = boto.connect_ec2()
+
     if ec2cxn is None:
         print "ec2 connection failed"
         raise Error("ec2 connection failed")
 
-    sqscxn = boto.connectsqs()
+    sqscxn = boto.connect_sqs()
     if sqscxn is None:
         print "sqs connection failed"
         raise Error("sqs connection failed")
 
-    instances = start_instances(ec2cxn, instance_count)
+    instances = start_instances(ec2cxn, instance_count, image_id)
 
-"""
-    basefiles = [os.path.basename(f) for f in files]
-    for b in basefiles:
-        bucketname = s3_bucketname_from_filename(b)
-        print b, bucketname
-        if not check_s3_files_exist(s3cxn, bucketname, [b]):
-            print "S3 file missing: ", b 
-            sys.exit(0)
-
-"""
     print "Waiting for all instances to enter running state"
+
     while True :
         non_running = filter(filter_non_running, instances)
         print non_running
@@ -114,48 +111,45 @@ def main(files, inqueue, outqueue, instance_count):
                     #print "Exception updating instance - exiting"
                     #sys.exit(4)
                     continue
-                print "Checking state: ", instance.id, instance.state
+                #print "Checking state: ", instance.id, instance.state
             time.sleep(5)
-            print "."
+            print ".",
         else:
             break
             
     print "All instances seem to be running - waiting  for services to start"
     # Do a stupid check to see if we can ssh in
-"""
-    if len(instances) == 1:
-        while True:
-            print "Checking services on SINGLE instance: ", instances
-            command = SSH_COMMAND + "ec2-user@"+instances[0].dns_name+ " \" ls  \""
-            r = commands.getstatusoutput(command)
-            print r[1]
-            if r[0] == 0:
-                break
-            else:
-                time.sleep(5)
-"""      
 
     s = instances[:]
     for i in xrange(len(s) - 1, -1, -1):
         print "Checking services on instance: ", s
         command = SSH_COMMAND + "ec2-user@"+s[i].dns_name+ " \" ls  \""
-        r = commands.getstatusoutput(command)
-        print r[1]
-        if r[0] == 0:
+        (result, output) = commands.getstatusoutput(command)
+        code = result >> 8
+        #print "Code: ", code 
+        #print "Output ", output 
+        if code == 0:
             print "Removing instance from wait queue: ", s[i].id
             del s[i]
-            break
+            print "New queue: ", len(s),  s
+            
+            if len(s) == 0:
+                break
         else:
-            time.sleep(5)
+            print "Waiting 10 seconds"
+            time.sleep(10)
         
     print "Services started"
     print "Starting jobs" 
 
 
-    foreach inst in instances:
-        command = SSH_COMMAND + " ec2-user@"+inst.dns_name+ " \"source /home/ec2-user/.bash_profile && python /home/ec2-user/analysis_and_trading/aws_pipeline/process_ticks.py -i %s -o %s "
-        Command = command % (inquque, outqueue)
-        result = commands.getstatusoutput(Command)
+    for inst in instances:
+        command = SSH_COMMAND + " ec2-user@"+inst.dns_name+ " \"source /home/ec2-user/.bash_profile && python /home/ec2-user/analysis_and_trading/aws_pipeline/process_ticks.py -i %s -o %s \""
+        Command = command % (inqueue, outqueue)
+        print "Command: ", Command
+        #(code, output)  = commands.getstatusoutput(Command)
+        sp = Popen(Command, shell=True)
+        print "Popen result: ", sp
                 
     outq = sqscxn.create_queue(outqueue)
     m = MHMessage()
@@ -313,43 +307,39 @@ def extract_features(instance, file):
     sp = Popen(command, shell=True)
     return sp
 
-def get_ec2_instances(ec2cxn, state=None):
-    if ec2cxn is None:
-        raise RuntimeError("Invalid ec2 connection")
-    # how do we distinguish reservations
-    reservations = ec2cxn.get_all_instances()
-    instances = []
-    for r in reservations:
-        for inst in r.instances:
-           if state is None or  inst.state == state: 
-                instances.append(inst) 
-    return instances
 
 if __name__ == "__main__":
     parser = OptionParser()
     parser.add_option("-o", "--outqueue", dest="outqueue", help="SQS outbound queue name", default='outq')
     parser.add_option("-i", "--inqueue", dest="inqueue", help="SQS inbound queue name", default='inq')
     parser.add_option("-n", "--instances", dest="instance_count", help="Number of EC2 instances", default='2')
+    parser.add_option("-a", "--image", dest="image_id", help="Image id", default=None)
  
     (options, args) = parser.parse_args()
-    if len(args) < 1:
+    #if len(args) < 1:
+        #print __doc__
+        #sys.exit()
+    #print args
+    #path = args[0]
+    #if not os.path.exists(path):
+        #print "ERROR - Specified path does not exist: ", path 
+        #sys.exit(0)
+
+    #if os.path.isdir(path):
+        #if path[-1] != '/':
+            #path=path+"/"
+        #files = glob.glob(path+"*.csv.gz")
+        #args = files
+        #args.extend(files)
+
+    if options.image_id is None:
+        print "ERROR - Must contain an image identifier to launch"
         print __doc__
         sys.exit()
-    print args
-    path = args[0]
-    if not os.path.exists(path):
-        print "Specified path does not exist: ", path 
-        sys.exit(0)
-    if os.path.isdir(path):
-        if path[-1] != '/':
-            path=path+"/"
-        files = glob.glob(path+"*.csv.gz")
-        args = files
-        #args.extend(files)
         
     print "Args: ", args
     print "Options: ", options
-    kwargs = dict(outqueue = options.outqueue, inquque = options.inqueue, instance_count = options.instance_count)
+    kwargs = dict(inqueue = options.inqueue, outqueue = options.outqueue, instance_count = options.instance_count, image_id = options.image_id)
     main(args, **kwargs)
 
 

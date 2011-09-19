@@ -34,15 +34,18 @@ def check_s3_bucket_exists(s3cxn, bucket_name):
 if __name__ == "__main__":
     parser = OptionParser()
     parser.add_option("-f", "--create-buckets", action='store_true', dest="create_buckets", help="Create buckets on s3 if they don't exist now", default=False)
-    parser.add_option("-q", "--queue", dest="queue", help="SQS queue name")
+    parser.add_option("-q", "--queue", dest="queue", help="SQS queue name", default="inq")
     (options, args) = parser.parse_args()
+
     if len(args) < 1:
         print __doc__
         sys.exit()
         exit(-1)
+
     if options.queue is None:
         print __doc__
         exit(-1)
+
     kwargs = dict(mode="test")
     print args
     path = args[0]
