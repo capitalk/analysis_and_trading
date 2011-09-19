@@ -146,6 +146,11 @@ def main(files, mode):
     print "Starting jobs" 
 
 
+    foreach inst in instances:
+        result = commands.getstatusoutput(SSH_COMMAND + " ec2-user@"+instance.dns_name+ " \"source /home/ec2-user/.bash_profile && python /home/ec2-user/analysis_and_trading/aws_pipeline/process_ticks.py ")
+                
+
+"""
     jobq = collections.deque()
     instance_file = zip(instances, basefiles)
     instance_file_dict = dict(instance_file)
@@ -179,7 +184,7 @@ def main(files, mode):
             print "Sleeping"
             time.sleep(60*10)
             continue
-
+"""
 
 
 def s3_bucketname_from_filename(filename):
@@ -213,10 +218,11 @@ def check_s3_key_exists(s3cxn, bucket_name, key):
         return False
     bucket = s3cxn.get_bucket(bucket_name)
     if bucket is None:
-        print "No bucket found on S3 with name: ", bucket.name
+        print "No bucket found on S3 with name: ", bucket_name
+        return False
     k = bucket.get_key(key)
     if k is None:
-        print "No key found on S3 with name: ", key.name
+        print "No key found on S3: ", key
         return False
     else:
         return True
@@ -230,17 +236,18 @@ def check_s3_files_exist(s3cxn, bucket, files):
             print "No such bucket: ", bucket
             return False
         key = bucket.get_key(basename)
-        if check_s3_key_exists(s3cxn, bucket, basename) is None:
+        ret = check_s3_key_exists(s3cxn, bucket, basename)
+        if ret is None:
             print "No such key (file): ", basename
             return False
-    return True
+        return ret 
 
 def hdf_to_s3(instance, file, bucket):
     """Move a file to a given bucket - set the key name to be the same as the file"""
     name_parts = file.split('.')
     hdf_file = name_parts[0]
     hdf_file += ".hdf"
-    result = commands.getstatusoutput(SSH_COMMAND + " ec2-user@"+instance.dns_name+ " \"source /home/ec2-user/.bash_profile && python /home/ec2-user/aws_pipeline/s3_multipart_upload.py "+FEATURE_DIR+hdf_file+" "+bucket+" \" ")
+    result = commands.getstatusoutput(SSH_COMMAND + " ec2-user@"+instance.dns_name+ " \"source /home/ec2-user/.bash_profile && python /home/ec2-user/analysis_and_trading/aws_pipeline/s3_multipart_upload.py "+FEATURE_DIR+hdf_file+" "+bucket+" \" ")
     print "Move hdf result: ", result
     return result[0] == 0
     
@@ -249,7 +256,7 @@ def prefetch_file(instance, bucketname, keyname):
     """Prefetch a csv file to a given instance"""
     file = os.path.basename(keyname)
     print "Fetching: ", keyname, " on ", instance.dns_name
-    command = SSH_COMMAND + " ec2-user@"+instance.dns_name+ " \"source /home/ec2-user/.bash_profile &&  python /home/ec2-user/aws_pipeline/s3_download_file.py -d "+EPHEMERAL0+" -b "+bucketname+" -k " + file + "\"" 
+    command = SSH_COMMAND + " ec2-user@"+instance.dns_name+ " \"source /home/ec2-user/.bash_profile &&  python /home/ec2-user/analysis_and_trading/aws_pipeline/s3_download_file.py -d "+EPHEMERAL0+" -b "+bucketname+" -k " + file + "\"" 
     print command
     result = commands.getstatusoutput(command)
     #print "Fetch result:", result
@@ -264,7 +271,7 @@ def check_job_complete(instance, file):
     name_parts = file.split('.')
     hdf_file = name_parts[0]
     hdf_file += ".hdf"
-    command = SSH_COMMAND + " ec2-user@"+instance.dns_name+ " \"source /home/ec2-user/.bash_profile && python /home/ec2-user/aws_pipeline/testHdfFinished.py "+FEATURE_DIR+hdf_file+" \" "
+    command = SSH_COMMAND + " ec2-user@"+instance.dns_name+ " \"source /home/ec2-user/.bash_profile && python /home/ec2-user/analysis_and_trading/aws_pipeline/testHdfFinished.py "+FEATURE_DIR+hdf_file+" \" "
     print command
     result = commands.getstatusoutput(command)
     print "Check complete result: ", result
@@ -278,7 +285,7 @@ def filter_non_running(i):
     return i.state != "running"    
 
 def extract_features(instance, file):
-    command = SSH_COMMAND + " ec2-user@"+instance.dns_name+" \"source /home/ec2-user/.bash_profile     && python /home/ec2-user/featureExtraction/extractFeatures.py -d "+FEATURE_DIR+"  /home/ec2-user/"+file+" \" "
+    command = SSH_COMMAND + " ec2-user@"+instance.dns_name+" \"source /home/ec2-user/.bash_profile     && python /home/ec2-user/analysis_and_trading/feature_extraction/extractFeatures.py -d "+FEATURE_DIR+"  /home/ec2-user/"+file+" \" "
     sp = Popen(command, shell=True)
     return sp
 
