@@ -15,11 +15,15 @@ import s3_multipart_upload
 import s3_download_file
 import boto
 import mics
+import time
+import h5py
 from mics import MIC_LIST
 from boto.sqs.message import MHMessage
 
-Command = """python /home/ec2-user/analysis_and_trading/feature_extraction/extractFeatures.py -d /home/ec2-user/features/ /home/ec2-user/%s"""
-   
+CommandExtractFiles = """python /home/ec2-user/analysis_and_trading/feature_extraction/extractFeatures.py -d /home/ec2-user/features/ /home/ec2-user/%s"""
+CommandFileToS3 = """source /home/ec2-user/.bash_profile && python /home/ec2-user/analysis_and_trading/aws_pipeline/s3_multipart_upload.py  %s %s"""
+
+USE_EPHEMERAL = False
 
 # First ephemeral storage mount - MUST HAVE TRAILING SLASH
 if USE_EPHEMERAL:
@@ -42,33 +46,76 @@ def check_s3_bucket_exists(s3cxn, bucket_name):
     else:
         return bucket
 
+def hdf_complete(filename):
+    if not os.path.exists(filename): return False
+    try:
+        f = h5py.File(filename, 'r')
+        finished = 'finished' in f.attrs and f.attrs['finished']
+        f.close()
+        return finished
+    except:
+        return False
+
 
 if __name__ == "__main__":
     parser = OptionParser()
     parser.add_option("-o", "--outqueue", dest="outqueue", help="SQS outbound queue name", default='outq')
     parser.add_option("-i", "--inqueue", dest="inqueue", help="SQS inbound queue name", default='inq')
+    parser.add_option("-d", "--debug", dest="debug", help="Print debug information", default='False')
     (options, args) = parser.parse_args()
+
+    print "Reading from queue: ", options.inqueue
+    print "Writing to queue: ", options.outqueue
 
     s3cxn = boto.connect_s3()
     sqscxn = boto.connect_sqs()
-    q = sqscxn.create_queue(options.inqueue)
-    q = sqscxn.create_queue(options.outqueue)
-    q.set_message_class(MHMessage)
-    while True:
-        rs = q.get_messages(visibility_timeout=60*20)
-        if len(rs) > 1:
-            input_file = rs['input_file'] 
-            bucket = rs['bucket'] 
-            get_s3_file_to_local(s3cxn, bucket_name,input_file, input_file, "/home/ec2-user")
-            name_parts = input_file.split('.')
-            hdf_file = name_parts[0]
-            hdf_file += ".hdf"
-            command = Command % (input_file)
-            commands.getstatusoutput(command) # TODO change to popen
-            result = commands.getstatusoutput("source /home/ec2-user/.bash_profile && python /home/ec2-user/analysis_and_trading/aws_pipeline/s3_multipart_upload.py "+FEATURE_DIR+hdf_file+" "+bucket+" \" ")         
-             
+    qin = sqscxn.create_queue(options.inqueue)
+    qout = sqscxn.create_queue(options.outqueue)
+    qin.set_message_class(MHMessage)
+    qout.set_message_class(MHMessage)
+    retrys = 0
+    retry_wait = 10
+    extractOK = False
+    moveOK = False
+    while retrys < 10:
+        rs = qin.get_messages(visibility_timeout=60*30)
+        if len(rs) >= 1:
+            m = MHMessage()
+            m = rs[0] 
+            print "Received message: ", m.get_body()
+            input_file = m['input_file'] 
+            bucket = m['bucket'] 
+            s3_download_file.get_s3_file_to_local(s3cxn, bucket,input_file, input_file, EPHEMERAL0)	
+
+            hdf_file = input_file.replace('csv.gz', 'hdf')
+            hdf_path = FEATURE_DIR + hdf_file;
+            if os.path.isfile(FEATURE_DIR+hdf_file) and hdf_complete(FEATURE_DIR+hdf_file):
+                print "HDF generated and complete - skipping feature extraction" 
+                extractOK = True
+            else:
+                print "Extracting features"
+                command = CommandExtractFiles % (input_file)
+                (code, string) = commands.getstatusoutput(command) 
+                extractOK = (code == 0)
+                if options.debug is True:
+                    print "Extract features retured: ", code, string
+
+            print "Moving features file"
+            command = CommandFileToS3 % (FEATURE_DIR+hdf_file, bucket)
+            (code, string) = commands.getstatusoutput(command) 
+            moveOK = (code == 0)
+            if options.debug is True:
+                print "Move tick files returned: ", code, string
+            
+            print extractOK, moveOK
+            if extractOK and moveOK:
+                qin.delete_message(m)
+                retrys = 0
+                
+                 
         else:
-            break 
+            time.sleep(retry_wait)
+            retrys += 1
      
 
 

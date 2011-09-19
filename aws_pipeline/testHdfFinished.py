@@ -8,7 +8,7 @@ import os
 import sys
 import h5py
 
-def file_already_done(filename):
+def hdf_complete(filename):
     if not os.path.exists(filename): return False 
     try:
         f = h5py.File(filename, 'r')
@@ -24,7 +24,7 @@ if __name__ == "__main__":
         print "Usage: testHdfFinished.py <filename>"
         sys.exit()
     else:
-        ret = file_already_done(sys.argv[1])
+        ret = hdf_complete(sys.argv[1])
         if ret == True:
             print sys.argv[1], " complete"
             sys.exit(0)
