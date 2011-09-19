@@ -107,7 +107,6 @@ if __name__ == "__main__":
             if options.debug is True:
                 print "Move tick files returned: ", code, string
             
-            print extractOK, moveOK
             if extractOK and moveOK:
                 retrys = 0
                 md = boto.utils.get_instance_metadata()
@@ -127,3 +126,6 @@ if __name__ == "__main__":
             m['complete-time'] = time.asctime(time.gmtime()) 
             m['instance-id'] = md['instance-id']
             #ec2cxn.terminate_instances([md['instance-id']]) 
+
+
+
