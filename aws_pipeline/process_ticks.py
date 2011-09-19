@@ -109,11 +109,10 @@ if __name__ == "__main__":
             
             if extractOK and moveOK:
                 retrys = 0
-                md = boto.utils.get_intance_metadata()
-                pub_dns = md['']
+                md = boto.utils.get_instance_metadata()
                 m['instance-id'] = md['instance-id']
                 m['public-hostname'] = md['public-hostname']
-                quot.write(m) 
+                qout.write(m) 
                 qin.delete_message(m)
                  
         else:
@@ -121,3 +120,9 @@ if __name__ == "__main__":
             retrys += 1
      
         if retrys == 10:
+            md = boto.utils.get_instance_metadata()
+            ec2cxn = boto.connect_ec2()
+            m = MHMessage()
+            m['complete-time'] = time.asctime(time.gmtime()) 
+            m['instance-id'] = md['instance-id']
+            #ec2cxn.terminate_instances([md['instance-id']]) 
