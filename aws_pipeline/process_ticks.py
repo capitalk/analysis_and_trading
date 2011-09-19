@@ -109,13 +109,16 @@ if __name__ == "__main__":
             
             print extractOK, moveOK
             if extractOK and moveOK:
-                qin.delete_message(m)
                 retrys = 0
-                
+                md = boto.utils.get_intance_metadata()
+                pub_dns = md['']
+                m['instance-id'] = md['instance-id']
+                m['public-hostname'] = md['public-hostname']
+                quot.write(m) 
+                qin.delete_message(m)
                  
         else:
             time.sleep(retry_wait)
             retrys += 1
      
-
-
+        if retrys == 10:
