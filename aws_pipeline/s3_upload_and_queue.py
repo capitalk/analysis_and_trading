@@ -69,6 +69,7 @@ if __name__ == "__main__":
 
     s3cxn = boto.connect_s3()
     sqscxn = boto.connect_sqs()
+    exists = False
     q = sqscxn.create_queue(options.queue)
     q.set_message_class(MHMessage)
     bucket_name = BUCKET_PREFIX+mic.lower()
@@ -82,8 +83,15 @@ if __name__ == "__main__":
             sys.exit(errno.ENFILE)
     
     for f in files:
-        print "Uploading: ", f
-        s3_multipart_upload.main(f, bucket_name)         
+        bucket = s3cxn.get_bucket(bucket)
+        key = bucket.get_key(os.path.basename(f))
+        exists = (key is not None)
+        if exists == True:
+            print "Key exists - skipping upload"
+        else:
+            print "Uploading: ", f
+            s3_multipart_upload.main(f, bucket_name)         
+
         m = MHMessage()
         m['input_file'] = os.path.basename(f)
         m['bucket'] = bucket_name

@@ -28,6 +28,7 @@ from progressbar import AnimatedMarker, Bar, BouncingBar, Counter, ETA, \
 import boto
 import boto.ec2.blockdevicemapping
 from boto.ec2.blockdevicemapping import BlockDeviceType, BlockDeviceMapping
+from boto.sqs.message import MHMessage
 
 
 SSH_COMMAND= "ssh -i ~/aws/capk.pem -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "
@@ -45,8 +46,33 @@ else:
 # Feature output directory - MUST HAVE TRAILING SLASH
 FEATURE_DIR=EPHEMERAL0+"features/"
 
+def start_intances(ec2cxn, instance_count):
+    images = ec2cxn.get_all_images(owners="self")
+    #print "Found ", len(images) , " images"
+    if len(images) == 1:
+        image = images[0]
+        print "Using image: ", image.name, image.id
+        secGroups = ["capk"]
+        print "Starting ", instance_count, " instances"
+        
+        if USE_EPHEMERAL:
+            map = BlockDeviceMapping()
+            sdb1 = BlockDeviceType()
+            sdb1.ephemeral_name = 'ephemeral0'
+            map['/dev/sdb1'] = sdb1
+            reservation = ec2cxn.run_instances(image.id, min_count=1, max_count=instance_count, block_device_map=map, security_groups=secGroups, key_name="capk", instance_type="c1.xlarge")
+        else:
+            reservation = ec2cxn.run_instances(image.id, min_count=1, max_count=instance_count, security_groups=secGroups, key_name="capk", instance_type="c1.xlarge")
 
-def main(files, mode):
+        instances = reservation.instances
+        return instances
+    else:
+        print "More than one image exists - exiting"
+        sys.exit(2)
+    
+    
+
+def main(files, inqueue, outqueue, instance_count):
     s3cxn = boto.connect_s3()
     if s3cxn is None:
         print "s3 connection failed"
@@ -56,11 +82,14 @@ def main(files, mode):
         print "ec2 connection failed"
         raise Error("ec2 connection failed")
 
-    fileCount = len(files)
-    # We will launch one instance per file
-    instanceCount = fileCount
-    # Can we launch less than fileCount images? Save some cash? 
-    
+    sqscxn = boto.connectsqs()
+    if sqscxn is None:
+        print "sqs connection failed"
+        raise Error("sqs connection failed")
+
+    instances = start_instances(ec2cxn, instance_count)
+
+"""
     basefiles = [os.path.basename(f) for f in files]
     for b in basefiles:
         bucketname = s3_bucketname_from_filename(b)
@@ -69,31 +98,7 @@ def main(files, mode):
             print "S3 file missing: ", b 
             sys.exit(0)
 
-
-    images = ec2cxn.get_all_images(owners="self")
-    #print "Found ", len(images) , " images"
-    if len(images) == 1:
-        image = images[0]
-        print "Using image: ", image.name, image.id
-        secGroups = ["capk"]
-        print "Starting ", instanceCount, " instances"
-        
-        if USE_EPHEMERAL:
-            map = BlockDeviceMapping()
-            sdb1 = BlockDeviceType()
-            sdb1.ephemeral_name = 'ephemeral0'
-            map['/dev/sdb1'] = sdb1
-            reservation = ec2cxn.run_instances(image.id, min_count=1, max_count=instanceCount, block_device_map=map, security_groups=secGroups, key_name="capk", instance_type="c1.xlarge")
-        else:
-            reservation = ec2cxn.run_instances(image.id, min_count=1, max_count=instanceCount, security_groups=secGroups, key_name="capk", instance_type="c1.xlarge")
-
-        instances = reservation.instances
-        print instances
-
-    else:
-        print "More than one image exists - exiting"
-        sys.exit(2)
-
+"""
     print "Waiting for all instances to enter running state"
     while True :
         non_running = filter(filter_non_running, instances)
@@ -117,6 +122,7 @@ def main(files, mode):
             
     print "All instances seem to be running - waiting  for services to start"
     # Do a stupid check to see if we can ssh in
+"""
     if len(instances) == 1:
         while True:
             print "Checking services on SINGLE instance: ", instances
@@ -127,8 +133,8 @@ def main(files, mode):
                 break
             else:
                 time.sleep(5)
-        
-        
+"""      
+
     s = instances[:]
     for i in xrange(len(s) - 1, -1, -1):
         print "Checking services on instance: ", s
@@ -147,8 +153,26 @@ def main(files, mode):
 
 
     foreach inst in instances:
-        result = commands.getstatusoutput(SSH_COMMAND + " ec2-user@"+instance.dns_name+ " \"source /home/ec2-user/.bash_profile && python /home/ec2-user/analysis_and_trading/aws_pipeline/process_ticks.py ")
+        command = SSH_COMMAND + " ec2-user@"+inst.dns_name+ " \"source /home/ec2-user/.bash_profile && python /home/ec2-user/analysis_and_trading/aws_pipeline/process_ticks.py -i %s -o %s "
+        Command = command % (inquque, outqueue)
+        result = commands.getstatusoutput(Command)
                 
+    outq = sqscxn.create_queue(outqueue)
+    m = MHMessage()
+    outq.set_message_class(MHMessage)
+    retrys = 0
+    retry_wait = 10
+    while retrys < 10:
+        rs = outq.get_messages() 
+        if len(rs) >= 1:
+            m = MHMessage()
+            m = rs[0]
+            print "Received message: ", m.get_body()
+            outq.delete_message(m)
+    
+        else:
+            time.sleep(retry_wait)
+            retrys += 1
 
 """
     jobq = collections.deque()
@@ -303,11 +327,14 @@ def get_ec2_instances(ec2cxn, state=None):
 
 if __name__ == "__main__":
     parser = OptionParser()
+    parser.add_option("-o", "--outqueue", dest="outqueue", help="SQS outbound queue name", default='outq')
+    parser.add_option("-i", "--inqueue", dest="inqueue", help="SQS inbound queue name", default='inq')
+    parser.add_option("-n", "--instances", dest="instance_count", help="Number of EC2 instances", default='2')
+ 
     (options, args) = parser.parse_args()
     if len(args) < 1:
         print __doc__
         sys.exit()
-    kwargs = dict(mode="test")
     print args
     path = args[0]
     if not os.path.exists(path):
@@ -322,6 +349,7 @@ if __name__ == "__main__":
         
     print "Args: ", args
     print "Options: ", options
+    kwargs = dict(outqueue = options.outqueue, inquque = options.inqueue, instance_count = options.instance_count)
     main(args, **kwargs)
 
 
