@@ -47,8 +47,8 @@ else:
 FEATURE_DIR=EPHEMERAL0+"features/"
 
 SECURITY_GROUPS = ['capk']
-INSTANCE_TYPE = "t1.micro"
-#INSTANCE_TYPE = "c1.xlarge"
+#INSTANCE_TYPE = "t1.micro"
+INSTANCE_TYPE = "c1.xlarge"
 
 def start_instances(ec2cxn, instance_count, image_id):
     #images = ec2cxn.get_all_images(owners="self")

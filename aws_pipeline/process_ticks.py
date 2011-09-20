@@ -125,7 +125,7 @@ if __name__ == "__main__":
             m = MHMessage()
             m['complete-time'] = time.asctime(time.gmtime()) 
             m['instance-id'] = md['instance-id']
-            #ec2cxn.terminate_instances([md['instance-id']]) 
+            ec2cxn.terminate_instances([md['instance-id']]) 
 
 
 
