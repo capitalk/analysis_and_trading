@@ -93,14 +93,14 @@ if __name__ == "__main__":
                 print "HDF generated and complete - skipping feature extraction" 
                 extractOK = True
             else:
-                print "Extracting features"
+                print "Processing file: ", input_file
                 command = CommandExtractFiles % (input_file)
                 (code, string) = commands.getstatusoutput(command) 
                 #extractOK = (code == 0)
                 if options.debug is True:
-                    print "Extract features retured: ", code, string
+                    print "Processing retured: ", code, string
 
-            print "Moving features file"
+            print "Moving processed file file to bucket"
             command = CommandFileToS3 % (FEATURE_DIR+hdf_file, bucket)
             (code, string) = commands.getstatusoutput(command) 
             #moveOK = (code == 0)
