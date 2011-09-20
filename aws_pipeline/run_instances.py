@@ -51,12 +51,6 @@ SECURITY_GROUPS = ['capk']
 INSTANCE_TYPE = "c1.xlarge"
 
 def start_instances(ec2cxn, instance_count, image_id):
-    #images = ec2cxn.get_all_images(owners="self")
-    #print "Found ", len(images) , " images"
-    #if len(images) == 1:
-        #image = images[0]
-        #print "Using image: ", image.name, image.id
-        #print "Starting ", instance_count, " instances"
     print "Attempting to start ", instance_count, " instances of image: ", image_id     
     if USE_EPHEMERAL:
         map = BlockDeviceMapping()
@@ -73,10 +67,6 @@ def start_instances(ec2cxn, instance_count, image_id):
     
     return instances
 
-    #else:
-    #    print "More than one image exists - exiting"
-    #    sys.exit(2)
-    
     
 
 def main(args, inqueue, outqueue, instance_count, image_id):
@@ -155,7 +145,7 @@ def main(args, inqueue, outqueue, instance_count, image_id):
     m = MHMessage()
     outq.set_message_class(MHMessage)
     retrys = 0
-    retry_wait = 10
+    retry_wait = 60
     while retrys < 10:
         rs = outq.get_messages() 
         if len(rs) >= 1:
@@ -163,139 +153,10 @@ def main(args, inqueue, outqueue, instance_count, image_id):
             m = rs[0]
             print "Received message: ", m.get_body()
             outq.delete_message(m)
-    
+            retrys = 0 
         else:
             time.sleep(retry_wait)
             retrys += 1
-
-"""
-    jobq = collections.deque()
-    instance_file = zip(instances, basefiles)
-    instance_file_dict = dict(instance_file)
-
-    for inst in instance_file_dict:
-        file = instance_file_dict[inst]
-        bucketname = s3_bucketname_from_filename(file)
-        if prefetch_file(inst, bucketname, file) == False:
-            print "Error fetching file - terminating instance";
-            terminate_list = [inst.id]
-            ec2cxn.terminate_instances(terminate_list);
-        print "Processing ", file, " on : ", inst.dns_name, "\n"
-        sp = extract_features(inst, file)
-        job = [sp, inst, file]
-        jobq.append(job)
-        print "Adding ", sp, " to ", inst
-
-    
-    while jobq:
-        [proc, inst, file] = jobq.pop();
-        print "Polling", proc, inst, file 
-        retcode = proc.poll()
-        if retcode is not None:
-            print "Feature extraction complete on: ", file, inst.dns_name
-            bucketname = s3_bucketname_from_filename(file)
-            print "Moving ", file, " to bucket ", bucketname
-            hdf_to_s3(inst, file, bucketname)
-            break
-        else:
-            jobq.appendleft([proc, inst, file])
-            print "Sleeping"
-            time.sleep(60*10)
-            continue
-"""
-
-
-def s3_bucketname_from_filename(filename):
-    names = filename.split(".")
-    basename = names[0]
-    [mic, symbol, year, month, day] = basename.split('_')
-    bucketname = BUCKET_PREFIX+mic.lower()
-    return bucketname
-
-def s3_key_from_filename(s3cxn, filename):
-    bucketname = s3_bucketname_from_filename(filename)
-    bucket = s3cxn.get_bucket(bucketname)
-    if bucket is None:
-        print "No such bucket: ", bucketname
-        return None
-    else:
-        keyname = s3_filename_from_attrs(mic, symbol, year, month, day)
-        key = bucket.get_key(keyname)
-    return key     
-    
-
-def s3_filename_from_attrs(mic, symbol, year, month, day):
-    bucketname = mic.lower()
-    filename = mic.upper()+pair.upper()+"_"+year+"_"+month+"_"+day
-    return filename
-        
- 
-def check_s3_key_exists(s3cxn, bucket_name, key):
-    if bucket_name is None:
-        print "No bucket specified"
-        return False
-    bucket = s3cxn.get_bucket(bucket_name)
-    if bucket is None:
-        print "No bucket found on S3 with name: ", bucket_name
-        return False
-    k = bucket.get_key(key)
-    if k is None:
-        print "No key found on S3: ", key
-        return False
-    else:
-        return True
-
-def check_s3_files_exist(s3cxn, bucket, files):
-    for f in files:
-        print "Checking:", bucket, " for ", f
-        basename = os.path.basename(f)
-        bucket = s3cxn.get_bucket(bucket)
-        if bucket is None:
-            print "No such bucket: ", bucket
-            return False
-        key = bucket.get_key(basename)
-        ret = check_s3_key_exists(s3cxn, bucket, basename)
-        if ret is None:
-            print "No such key (file): ", basename
-            return False
-        return ret 
-
-def hdf_to_s3(instance, file, bucket):
-    """Move a file to a given bucket - set the key name to be the same as the file"""
-    name_parts = file.split('.')
-    hdf_file = name_parts[0]
-    hdf_file += ".hdf"
-    result = commands.getstatusoutput(SSH_COMMAND + " ec2-user@"+instance.dns_name+ " \"source /home/ec2-user/.bash_profile && python /home/ec2-user/analysis_and_trading/aws_pipeline/s3_multipart_upload.py "+FEATURE_DIR+hdf_file+" "+bucket+" \" ")
-    print "Move hdf result: ", result
-    return result[0] == 0
-    
-            
-def prefetch_file(instance, bucketname, keyname):
-    """Prefetch a csv file to a given instance"""
-    file = os.path.basename(keyname)
-    print "Fetching: ", keyname, " on ", instance.dns_name
-    command = SSH_COMMAND + " ec2-user@"+instance.dns_name+ " \"source /home/ec2-user/.bash_profile &&  python /home/ec2-user/analysis_and_trading/aws_pipeline/s3_download_file.py -d "+EPHEMERAL0+" -b "+bucketname+" -k " + file + "\"" 
-    print command
-    result = commands.getstatusoutput(command)
-    #print "Fetch result:", result
-    if result[0] != 0:
-        print result[1]
-    
-    return result[0] == 0
-
-def check_job_complete(instance, file):
-    """Run script to check for finished flag in hdf file""" 
-    # TODO - use SQS/SNS for job completion
-    name_parts = file.split('.')
-    hdf_file = name_parts[0]
-    hdf_file += ".hdf"
-    command = SSH_COMMAND + " ec2-user@"+instance.dns_name+ " \"source /home/ec2-user/.bash_profile && python /home/ec2-user/analysis_and_trading/aws_pipeline/testHdfFinished.py "+FEATURE_DIR+hdf_file+" \" "
-    print command
-    result = commands.getstatusoutput(command)
-    print "Check complete result: ", result
-    if (result[0] == 0):
-        print "Job finished on: ", instance.dns_name
-    return result[0] == 0 
 
 
 def filter_non_running(i):
@@ -316,29 +177,12 @@ if __name__ == "__main__":
     parser.add_option("-a", "--image", dest="image_id", help="Image id", default=None)
  
     (options, args) = parser.parse_args()
-    #if len(args) < 1:
-        #print __doc__
-        #sys.exit()
-    #print args
-    #path = args[0]
-    #if not os.path.exists(path):
-        #print "ERROR - Specified path does not exist: ", path 
-        #sys.exit(0)
-
-    #if os.path.isdir(path):
-        #if path[-1] != '/':
-            #path=path+"/"
-        #files = glob.glob(path+"*.csv.gz")
-        #args = files
-        #args.extend(files)
 
     if options.image_id is None:
         print "ERROR - Must contain an image identifier to launch"
         print __doc__
         sys.exit()
         
-    #print "Args: ", args
-    #print "Options: ", options
     kwargs = dict(inqueue = options.inqueue, outqueue = options.outqueue, instance_count = options.instance_count, image_id = options.image_id)
     main(args, **kwargs)
 
