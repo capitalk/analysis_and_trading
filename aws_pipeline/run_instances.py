@@ -96,7 +96,8 @@ def main(args, inqueue, outqueue, instance_count, image_id):
         raise Error("sqs connection failed")
 
     instances = start_instances(ec2cxn, instance_count, image_id)
-    [print i.id for i in instances]
+    for i in instances:
+        print "==>", i.id
 
     print "Waiting for all instances to enter running state"
 
