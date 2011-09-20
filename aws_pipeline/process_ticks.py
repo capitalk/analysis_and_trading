@@ -101,11 +101,12 @@ if __name__ == "__main__":
                     print "Processing retured: ", code, string
 
             print "Moving processed file file to bucket"
-            command = CommandFileToS3 % (FEATURE_DIR+hdf_file, bucket)
-            (code, string) = commands.getstatusoutput(command) 
+            s3_multipart_upload.main(FEATURE_DIR+hdf_file, bucket)
+            #command = CommandFileToS3 % (FEATURE_DIR+hdf_file, bucket)
+            #(code, string) = commands.getstatusoutput(command) 
             #moveOK = (code == 0)
-            if options.debug is True:
-                print "Move tick files returned: ", code, string
+            #if options.debug is True:
+            #    print "Move tick files returned: ", code, string
             
             #if extractOK and moveOK:
             retrys = 0
