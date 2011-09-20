@@ -56,7 +56,7 @@ if __name__ == "__main__":
             continue 
         if os.path.isdir(arg):
             if arg[-1] != os.path.sep:
-                path=path+os.path.sep
+                arg=arg+os.path.sep
             #files.append(glob.glob(arg+"*.csv.gz"))
             files = files + glob.glob(arg+"*.csv.gz")
             #mic = path.split(os.path.sep)[-3]
