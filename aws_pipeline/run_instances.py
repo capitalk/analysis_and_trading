@@ -124,8 +124,9 @@ def main(args, inqueue, outqueue, instance_count, image_id):
     for i in xrange(len(s) - 1, -1, -1):
         print "Checking services on instance: ", s
         command = SSH_COMMAND + "ec2-user@"+s[i].dns_name+ " \" ls  \""
-        (result, output) = commands.getstatusoutput(command)
-        code = result >> 8
+        #(result, output) = commands.getstatusoutput(command)
+        #code = result >> 8
+        code = Popen(command)
         #print "Code: ", code 
         #print "Output ", output 
         if code == 0:
