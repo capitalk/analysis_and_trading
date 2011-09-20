@@ -96,24 +96,24 @@ if __name__ == "__main__":
                 print "Extracting features"
                 command = CommandExtractFiles % (input_file)
                 (code, string) = commands.getstatusoutput(command) 
-                extractOK = (code == 0)
+                #extractOK = (code == 0)
                 if options.debug is True:
                     print "Extract features retured: ", code, string
 
             print "Moving features file"
             command = CommandFileToS3 % (FEATURE_DIR+hdf_file, bucket)
             (code, string) = commands.getstatusoutput(command) 
-            moveOK = (code == 0)
+            #moveOK = (code == 0)
             if options.debug is True:
                 print "Move tick files returned: ", code, string
             
-            if extractOK and moveOK:
-                retrys = 0
-                md = boto.utils.get_instance_metadata()
-                m['instance-id'] = md['instance-id']
-                m['public-hostname'] = md['public-hostname']
-                qout.write(m) 
-                qin.delete_message(m)
+            #if extractOK and moveOK:
+            retrys = 0
+            md = boto.utils.get_instance_metadata()
+            m['instance-id'] = md['instance-id']
+            m['public-hostname'] = md['public-hostname']
+            qout.write(m) 
+            qin.delete_message(m)
                  
         else:
             time.sleep(retry_wait)

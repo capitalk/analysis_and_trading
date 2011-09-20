@@ -47,6 +47,8 @@ else:
 FEATURE_DIR=EPHEMERAL0+"features/"
 
 SECURITY_GROUPS = ['capk']
+INSTANCE_TYPE = "t1.micro"
+#INSTANCE_TYPE = "c1.xlarge"
 
 def start_instances(ec2cxn, instance_count, image_id):
     #images = ec2cxn.get_all_images(owners="self")
@@ -61,9 +63,9 @@ def start_instances(ec2cxn, instance_count, image_id):
         sdb1 = BlockDeviceType()
         sdb1.ephemeral_name = 'ephemeral0'
         map['/dev/sdb1'] = sdb1
-        reservation = ec2cxn.run_instances(image_id, min_count=1, max_count=instance_count, block_device_map=map, security_groups=SECURITY_GROUPS, key_name="capk", instance_type="c1.xlarge")
+        reservation = ec2cxn.run_instances(image_id, min_count=1, max_count=instance_count, block_device_map=map, security_groups=SECURITY_GROUPS, key_name="capk", instance_type=INSTANCE_TYPE)
     else:
-        reservation = ec2cxn.run_instances(image_id, min_count=1, max_count=instance_count, security_groups=SECURITY_GROUPS, key_name="capk", instance_type="c1.xlarge")
+        reservation = ec2cxn.run_instances(image_id, min_count=1, max_count=instance_count, security_groups=SECURITY_GROUPS, key_name="capk", instance_type=INSTANCE_TYPE)
 
     instances = reservation.instances
     if len(instances) == instance_count:
@@ -94,12 +96,13 @@ def main(args, inqueue, outqueue, instance_count, image_id):
         raise Error("sqs connection failed")
 
     instances = start_instances(ec2cxn, instance_count, image_id)
+    [print i.id for i in instances]
 
     print "Waiting for all instances to enter running state"
 
     while True :
         non_running = filter(filter_non_running, instances)
-        print non_running
+        #print non_running
         if len(non_running) > 0:
             for instance in instances:
                 try:
@@ -112,8 +115,8 @@ def main(args, inqueue, outqueue, instance_count, image_id):
                     #sys.exit(4)
                     continue
                 #print "Checking state: ", instance.id, instance.state
+            print "Waiting 5 seconds"
             time.sleep(5)
-            print ".",
         else:
             break
             
@@ -121,21 +124,16 @@ def main(args, inqueue, outqueue, instance_count, image_id):
     # Do a stupid check to see if we can ssh in
 
     s = instances[:]
-    for i in xrange(len(s) - 1, -1, -1):
-        print "Checking services on instance: ", s
-        command = SSH_COMMAND + "ec2-user@"+s[i].dns_name+ " \" ls  \""
-        #(result, output) = commands.getstatusoutput(command)
-        #code = result >> 8
-        code = Popen(command)
-        #print "Code: ", code 
-        #print "Output ", output 
-        if code == 0:
-            print "Removing instance from wait queue: ", s[i].id
-            del s[i]
-            print "New queue: ", len(s),  s
             
-            if len(s) == 0:
-                break
+    #for i in xrange(len(s) - 1, -1, -1):
+    while len(s) > 0:
+        x = len(s) - 1
+        print "Checking services on instance: ", s[x]
+        command = SSH_COMMAND + "ec2-user@"+s[x].dns_name+ " \" ls  \""
+        process = Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        (out, err) = process.communicate()
+        if len(out) > 0:
+            del s[x] 
         else:
             print "Waiting 10 seconds"
             time.sleep(10)
@@ -338,8 +336,8 @@ if __name__ == "__main__":
         print __doc__
         sys.exit()
         
-    print "Args: ", args
-    print "Options: ", options
+    #print "Args: ", args
+    #print "Options: ", options
     kwargs = dict(inqueue = options.inqueue, outqueue = options.outqueue, instance_count = options.instance_count, image_id = options.image_id)
     main(args, **kwargs)
 
