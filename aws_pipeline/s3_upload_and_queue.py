@@ -48,46 +48,56 @@ if __name__ == "__main__":
 
     kwargs = dict(mode="test")
     print args
-    path = args[0]
+    #path = args[0]
     files = []
-    if not os.path.exists(path):
-        print "Specified path does not exist: ", path 
-        sys.exit(0)
-    if os.path.isdir(path):
-        if path[-1] != os.path.sep:
-            path=path+os.path.sep
-        files = glob.glob(path+"*.csv.gz")
-        mic = path.split(os.path.sep)[-3]
-        if mic not in MIC_LIST:
-            print "Invalid mic specified: ", mic
-            sys.exit(errno.ENFILE)
-    else:
-        if os.path.isfile(args[0]):
-            file = os.path.basename(args[0])
-            files.append(args[0])
-            mic = file.split("_")[0]
+    for arg in args:
+        if not os.path.exists(arg):
+            print "Specified path does not exist: ", arg 
+            continue 
+        if os.path.isdir(arg):
+            if arg[-1] != os.path.sep:
+                path=path+os.path.sep
+            #files.append(glob.glob(arg+"*.csv.gz"))
+            files = files + glob.glob(arg+"*.csv.gz")
+            #mic = path.split(os.path.sep)[-3]
+            #if mic not in MIC_LIST:
+                #print "Invalid mic specified: ", mic
+                #sys.exit(errno.ENFILE)
         else:
-            print "Invalid file specified: ", file
-            sys.exit(errno.ENFILE)
+            if os.path.isfile(args[0]):
+                #files.append(glob.glob(arg))
+                files = files + glob.glob(arg)
+                #file = os.path.basename(args[0])
+                #mic = file.split("_")[0]
+            else:
+                print "Invalid file specified: ", file
+                #sys.exit(errno.ENFILE)
+
+    print "Processing files: ", files 
 
     s3cxn = boto.connect_s3()
     sqscxn = boto.connect_sqs()
     exists = False
     q = sqscxn.create_queue(options.queue)
     q.set_message_class(MHMessage)
-    bucket_name = BUCKET_PREFIX+mic.lower()
-    try:
-        bucket = check_s3_bucket_exists(s3cxn, bucket_name)    
-    except Exception:
-        if options.create_buckets == True:
-            print "Creating s3 bucket: ", bucket_name
-            s3cxn.create_bucket(bucket_name)
-        else:
-            sys.exit(errno.ENFILE)
     
+    # Check that all buckets exist or create them if needed
     for f in files:
+        basefile = os.path.basename(f)
+        mic = basefile.split("_")[0]
+        bucket_name = BUCKET_PREFIX+mic.lower()
+        try:
+            print "Checking bucket: ", bucket_name
+            bucket = check_s3_bucket_exists(s3cxn, bucket_name)    
+        except Exception:
+            if options.create_buckets == True:
+                print "Creating bucket: ", bucket_name
+                s3cxn.create_bucket(bucket_name)
+            else:
+                sys.exit(errno.ENFILE)
+    
         bucket = s3cxn.get_bucket(bucket)
-        key = bucket.get_key(os.path.basename(f))
+        key = bucket.get_key(basefile)
         exists = (key is not None)
         if exists == True:
             print "Key exists - skipping upload"
