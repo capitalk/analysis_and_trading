@@ -7,7 +7,7 @@ import sys
 import run_instances
 
 
-SSH_COMMAND= "ssh -i ~/aws/capk.pem -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "
+SSH_COMMAND= "ssh -i ~/analysis_and_trading/aws/capk.pem -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "
 
 
 ec2cxn = boto.connect_ec2()

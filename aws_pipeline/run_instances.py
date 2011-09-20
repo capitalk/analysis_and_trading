@@ -31,7 +31,7 @@ from boto.ec2.blockdevicemapping import BlockDeviceType, BlockDeviceMapping
 from boto.sqs.message import MHMessage
 
 
-SSH_COMMAND= "ssh -i ~/aws/capk.pem -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "
+SSH_COMMAND= "ssh -i ~/analysis_and_trading//aws/capk.pem -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "
 
 BUCKET_PREFIX="capk-"
 
