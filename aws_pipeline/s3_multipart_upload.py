@@ -89,7 +89,7 @@ def _multipart_upload(bucket, s3_key_name, tarball, mb_size, use_rr=True):
     def split_file(in_file, mb_size, split_num=5):
         prefix = os.path.join(os.path.dirname(in_file),
                               "%sS3PART" % (os.path.basename(s3_key_name)))
-        split_size = int(min(mb_size / (split_num * 2.0), 250))
+        split_size = int(min(mb_size / (split_num * 1.5), 250))
         if not os.path.exists("%saa" % prefix):
             cl = ["split", "-b%sm" % split_size, in_file, prefix]
             subprocess.check_call(cl)
