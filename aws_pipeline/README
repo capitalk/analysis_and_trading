@@ -8,3 +8,4 @@ There are only three important files in the process of running jobs on EC2 with 
    To DEBUG - create an instance based on the AMI you want and login to it with ssh (ssh -i key.pem ec2-user@instance.public_dns ) and then run it directly to see it fetch from the queu and process
 
 
+4) view_queue.py - view the contents of a queue by printing the body in text - takes any message type as a param 
