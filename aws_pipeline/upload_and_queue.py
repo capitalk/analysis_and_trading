@@ -47,8 +47,7 @@ if __name__ == "__main__":
         exit(-1)
 
     kwargs = dict(mode="test")
-    print args
-    #path = args[0]
+    print "Args: ", args
     files = []
     for arg in args:
         if not os.path.exists(arg):
@@ -57,21 +56,12 @@ if __name__ == "__main__":
         if os.path.isdir(arg):
             if arg[-1] != os.path.sep:
                 arg=arg+os.path.sep
-            #files.append(glob.glob(arg+"*.csv.gz"))
             files = files + glob.glob(arg+"*.csv.gz")
-            #mic = path.split(os.path.sep)[-3]
-            #if mic not in MIC_LIST:
-                #print "Invalid mic specified: ", mic
-                #sys.exit(errno.ENFILE)
         else:
             if os.path.isfile(args[0]):
-                #files.append(glob.glob(arg))
                 files = files + glob.glob(arg)
-                #file = os.path.basename(args[0])
-                #mic = file.split("_")[0]
             else:
                 print "Invalid file specified: ", file
-                #sys.exit(errno.ENFILE)
 
     print "Processing files: ", files 
 
