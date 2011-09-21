@@ -1,0 +1,10 @@
+There are only three important files in the process of running jobs on EC2 with S3 files:
+
+1) upload_and_queue.py - Upload files and queue msgs 
+
+2) run_instances.py - create n instances based on a given AMI and start remote processing jobs on those instances
+
+3) process_ticks.py - this must be installed on the AMI that is running since the name is hard-coded in run_instances.py
+   To DEBUG - create an instance based on the AMI you want and login to it with ssh (ssh -i key.pem ec2-user@instance.public_dns ) and then run it directly to see it fetch from the queu and process
+
+
