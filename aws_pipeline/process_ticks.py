@@ -114,6 +114,7 @@ if __name__ == "__main__":
             md = boto.utils.get_instance_metadata()
             m['instance-id'] = md['instance-id']
             m['public-hostname'] = md['public-hostname']
+            m['completion-time'] =  time.asctime(time.gmtime())
             qout.write(m) 
             qin.delete_message(m)
                  
@@ -125,8 +126,9 @@ if __name__ == "__main__":
             md = boto.utils.get_instance_metadata()
             ec2cxn = boto.connect_ec2()
             m = MHMessage()
-            m['complete-time'] = time.asctime(time.gmtime()) 
+            m['shutdown-time'] = time.asctime(time.gmtime()) 
             m['instance-id'] = md['instance-id']
+            m['public-hostname'] = md['public-hostname']
             ec2cxn.terminate_instances([md['instance-id']]) 
 
 
