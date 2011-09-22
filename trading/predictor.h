@@ -1,6 +1,8 @@
 #include <iostream>
 #include <string> 
 #include <vector> 
+#include <sstream> 
+#include <stdio.h> 
 #include "Python.h"
 #include "numpy/arrayobject.h"
 

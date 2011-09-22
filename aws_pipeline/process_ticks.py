@@ -110,6 +110,7 @@ if __name__ == "__main__":
             #    print "Move tick files returned: ", code, string
             
             #if extractOK and moveOK:
+            os.remove(FEATURE_DIR+hdf_file)
             retrys = 0
             md = boto.utils.get_instance_metadata()
             m['instance-id'] = md['instance-id']
