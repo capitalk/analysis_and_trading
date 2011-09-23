@@ -117,6 +117,7 @@ if __name__ == "__main__":
             m['completion-time'] =  time.asctime(time.gmtime())
             qout.write(m) 
             qin.delete_message(m)
+            os.remove(FEATURE_DIR+hdf_file)
                  
         else:
             time.sleep(retry_wait)
