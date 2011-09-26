@@ -100,9 +100,3 @@ if __name__ == "__main__":
         m['bucket'] = bucket_name
         print "Queueing message" , m.get_body(), " ==> ", options.queue
         q.write(m)
-        
-        
-     
-        
-
-
