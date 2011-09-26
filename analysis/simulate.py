@@ -39,7 +39,7 @@ def aggressive(ts, bids, offers, signal, currency_pair,
         min_profit_prct = 0.0008, 
         usd_transaction_cost=13, 
         min_time_between_trades = 2000, 
-        carry_position = True):
+        carry_position = False):
     # how much of the payment currency can we buy with 1 dollar? 
     conversion_rate = get_static_usd_rate(currency_pair[1])
     trade_size = trade_size_usd * conversion_rate 
