@@ -4,18 +4,14 @@ features = [
     '(midprice/mean/5s - midprice/mean/500s) safe_div midprice/std/500s', # what's the z-score of the past 100ms of offers relative to a 500s gaussian
     '(midprice/mean/5s - midprice/mean/50s) safe_div midprice/std/50s', # what's the z-score of the past 100ms of offers relative to a 500s gaussian
     'log midprice/mean/5s % weighted_total_price/mean/5s',  # ratio between the midprice and the volume weighted average of all levels
-    
     'spread/mean/5s', 
-    
     'null_100ms_frame/mean/50s', # what percentage of 100ms frames have had messages arriving?
     'last_bid_digit_near_zero/mean/5s', # how close to 0 or 9 is the last digit?
     '(midprice/mean/5s - midprice/min/50s) safe_div (midprice/max/50s - midprice/min/50s)', # where in the range from min to max are we?  
-    
     'offer/std/5s',  # fast standard deviation of the bids 
     'offer/std/500s', # slow standard deviation of the bids
     'weighted_total_price/slope/5s', # what direction has the volume weighted level average been moving? 
-    'slope slope midprice/mean/50s', # acceleration of price, computed by repeated differencing (scaled by time difference between points)
-    "log bid_range/mean/50s safe_div offer_range/mean/50s", # how much wider is the bidside than the offer side? 
+    "bid_range/mean/50s - offer_range/mean/50s", # how much wider is the bidside than the offer side? 
     "abs (bid_vol/slope/5s - bid_vol/slope/500s) safe_div bid_vol/std/500s", # how far is the recent bid_volume rate of change deviating from 500s 
     "abs (offer_vol/slope/5s - offer_vol/slope/500s) safe_div offer_vol/std/500s", # how far off is recent offer volume rate of change from 500s
     "clean log bid_range/mean/5s safe_div spread/mean/50s", # how many spreads wide is the verical bid range? 
@@ -40,20 +36,36 @@ AWS_ACCESS_KEY_ID = 'AKIAITZSJIMPWRM54I4Q'
 AWS_SECRET_ACCESS_KEY = '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'
 
 def get_hdf_bucket(bucket='capk-fxcm'):
+    # just in case
+    import socket
+    socket.setdefaulttimeout(None)
     conn = boto.connect_s3(AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
     return conn.get_bucket(bucket)
 
 
 def load_s3_file(filename):     
     print "Loading", filename, "from S3"
-    bucket = get_hdf_bucket()
-    key = bucket.get_key(filename) 
-    (fileid, local_filename) = tempfile.mkstemp(prefix=filename)
-    print "Created local file:", local_filename 
-    print "Copying data from S3"
-    key.get_contents_to_filename(local_filename)
-    # do some s3 magic 
-    return local_filename 
+    max_failures = 3 
+    fail_count = 0 
+    got_file = False 
+    while fail_count < max_failures and not got_file:
+        bucket = get_hdf_bucket()
+        key = bucket.get_key(filename) 
+        (fileid, local_filename) = tempfile.mkstemp(prefix=filename)
+        print "Created local file:", local_filename 
+        print "Copying data from S3"
+        try: 
+            key.get_contents_to_filename(local_filename)
+            got_file = True 
+        except: 
+            print "Download timed out, trying again"
+            fail_count += 1
+            os.remove(local_filename) 
+    
+    if got_file:
+        return local_filename 
+    else:
+        raise RuntimeError("Failed to download " + filename) 
     
     
 def load_s3_files_in_parallel(filenames):
@@ -76,12 +88,26 @@ def dataset_to_feature_matrix(d, features=features):
         result[:, idx] = vec
     return result
 
+def check_data(x):
+    inf_mask = np.isinf(x)
+    if np.any(inf_mask):
+        raise RuntimeError("Found inf: " + str(np.nonzero(inf_mask)))
+        
+    nan_mask = np.isnan(x)
+    if np.any(nan_mask):
+        raise RuntimeError("Found NaN: " + str(np.nonzero(nan_mask)))
+        
+    same_mask = (np.std(x, 0) <= 0.0000001)
+    if np.any(same_mask):
+        raise RuntimeError("Column all same: " + str(np.nonzero(same_mask)))
+    
 def load_files(files, features=features, signal_fn=signals.aggressive_profit): 
     print "Loading datasets..."
     datasets = load_s3_files_in_parallel(files)
     print "Flattening datasets into feature matrices..." 
     matrices = [dataset_to_feature_matrix(d, features) for d in datasets] 
     feature_data = np.concatenate(matrices)
+    check_data(feature_data) 
     signal = np.concatenate([signal_fn(d) for d in datasets] )
     times = np.concatenate([d['t/100ms'] for d in datasets])
     bids = np.concatenate( [d['bid/100ms'] for d in datasets])
@@ -116,6 +142,7 @@ def eval_prediction(ts, bids, offers, pred, actual, currency_pair, cut=0.0015):
 
 # load each file, extract features, concat them together 
 def worker(params, features, train_files, test_files): 
+    print params 
     print "Loading training data..."
     train_data, train_signal, train_times, train_bids, train_offers, _ = load_files(train_files) 
     print "X_train:", train_data[10:13, :], "..."
@@ -128,8 +155,10 @@ def worker(params, features, train_files, test_files):
     
     # assume all files from same currency pair 
     ccy = currencies[0]
-    print "Creating encoder with k=", params['k']
-    e = encoder.FeatureEncoder(train_data, whiten=False, n_centroids=params['k'])
+    k = params['k']
+    whiten = params['whiten']
+    print "Creating encoder with k=", k, 'whiten=', whiten
+    e = encoder.FeatureEncoder(train_data, whiten=whiten, n_centroids=k)
     
     print "Encoding training data" 
     train_encoded = e.encode(train_data, transformation = params['t'])
@@ -153,29 +182,33 @@ def worker(params, features, train_files, test_files):
     # scramble the training the set order and split it into a half-training set
     # and a validation set to search for best hyper-parameters like 
     # alpha and class weights 
-    n = train_encoded.shape[0]
-    print "Creating validation set (size", (n/2), ")"
+    n = min(train_encoded.shape[0] / 2, 200000)
+    print "Creating validation set (size = ", n, ")"
     
     p = np.random.permutation(n)
-    half_train_indices = p[:(n/2)]
-    validation_indices = p[(n/2):]
+    half_train_indices = p[:n]
+    validation_indices = p[n:]
     half_train = train_encoded[half_train_indices, :] 
     half_signal = train_signal[half_train_indices]
+    
     validation_set = train_encoded[validation_indices, :]
     validation_signal = train_signal[validation_indices] 
     validation_times = train_times[validation_indices]
     validation_bids = train_bids[validation_indices]
     validation_offers = train_offers[validation_indices] 
     
-    best_model = None 
-    best_accuracy = -1
     best_weights = None 
-    
+    best_alpha = None 
+    best_result = {'accuracy': -1, 'ppt': -10000}
+
+    def is_better(new, curr):
+        return 
+        
     print "Searching for best hyper-parameters" 
     for pos_weight in pos_weights: 
         for neg_weight in neg_weights: 
             for alpha in alphas: 
-                model = scikits.learn.linear_model.SGDClassifier(loss=loss, penalty=penalty, alpha=alpha, shuffle=True, n_jobs=-1)
+                model = scikits.learn.linear_model.SGDClassifier(loss=loss, penalty=penalty, alpha=alpha, shuffle=True)
                 weights = {0:1, -1:neg_weight, 1: pos_weight}
                 print "Training SVM with weights = ", weights, 'alpha=',alpha
                 #svm = scikits.learn.svm.LinearSVC(C = params['c'])
@@ -185,60 +218,74 @@ def worker(params, features, train_files, test_files):
                 result = eval_prediction(validation_times, validation_bids, validation_offers, pred, validation_signal, ccy)
                 print result
             
-                if result['accuracy'] > best_accuracy: 
-                    best_model = scikits.learn.linear_model.SGDClassifier(loss=loss, penalty=penalty, alpha=alpha, shuffle=True, n_jobs=-1)
-                    best_accuracy = result['accuracy'] 
+                more_accurate = result['accuracy'] > best_result['accuracy']
+                as_accurate = result['accuracy'] == best_result['accuracy']
+                more_profit = result['ppt'] > best_result['ppt']
+                if more_accurate or (as_accurate and more_profit):
+                    best_result = result 
+                    best_alpha = alpha 
                     best_weights = weights 
                     
     print "Fitting full model"
-    best_model.fit(train_encoded, train_signal, class_weight=best_weights)
     
+    svm = scikits.learn.linear_model.SGDClassifier(loss=loss, penalty=penalty, alpha=best_alpha, shuffle=True)
+    print best_alpha, svm.alpha 
+    svm.fit(train_encoded, train_signal, class_weight=best_weights)
+    print best_alpha, svm.alpha 
     print "Evaluating full model"
     
-    pred = best_model.predict(test_encoded)
+    pred = svm.predict(test_encoded)
+    print best_alpha, svm.alpha 
     result = eval_prediction(test_times, test_bids, test_offers, pred, test_signal, ccy)
-    print best_model 
-    print best_model.coef_
-    print e
     print features
+    print '[model]'
+    print svm
+    print svm.coef_
+    print '[encoder]'
+    print e.mean_
+    print e.std_
+    print e.centroids
+    print '[result]' 
     print result 
+    # have to clear sample weights since SGDClassifier stupidly keeps them 
+    # after training 
+    svm.sample_weight = [] 
+    return  params, result, e, svm,  best_weights
     
-    return params, features, e, best_weights, best_model, result
-
 def gen_work_list(): 
-    n_centroids = [None, 50, 100] 
-    cs = [1.0, 5.0]
+    n_centroids = [None, 25, 50, 75] 
+    #cs = [1.0, 5.0]
     #cut_thresholds = [.0005, .001, .0015,  0.002]
     transformations = ['triangle', 'thresh', 'prob']
     losses = ['hinge', 'modified_huber']
     penalties = ['l2', 'l1', 'elasticnet']
-    alphas = [0.001, 0.01]
-    
-    class_weights = [5, 15, 30] 
+    alphas = [0.0001, 0.001, 0.01]
+    whiten = [False]
+    class_weights = [2, 4, 8, 16]
     worklist = [] 
     for k in n_centroids:
         ts = transformations if k is not None else [None] 
         for t in ts: 
-            #for c in cs:
-            for loss in losses:
-                for p in penalties:
-                    params = {
-                        'penalty': p, 
-                        'loss': loss, 
-                        'k': k, 
-                        't': t, 
-                        'alphas': alphas, 
-                #        'c': c, 
-                        'pos_weights': class_weights, 
-                        'neg_weights': class_weights,
-                    }
-                    worklist.append(params)
+            for w in whiten: 
+                for loss in losses:
+                    for p in penalties:
+                        params = {
+                            'penalty': p, 
+                            'loss': loss, 
+                            'k': k, 
+                            't': t, 
+                            'alphas': alphas, 
+                            'whiten': w, 
+                            'pos_weights': class_weights, 
+                            'neg_weights': class_weights,
+                        }
+                        worklist.append(params)
     return worklist 
 
 def init_cloud(): 
-    cloud.config.force_serialize_debugging = False
-    cloud.config.force_serialize_logging = False 
-    cloud.config.commit()
+    #cloud.config.force_serialize_debugging = False
+    #cloud.config.force_serialize_logging = False 
+    #cloud.config.commit()
     cloud.setkey(2579, "f228c0325cf687779264a0b0698b0cfe40148d65")
 
 def param_search(train_files, test_files, features=features, debug=False):
@@ -251,22 +298,29 @@ def param_search(train_files, test_files, features=features, debug=False):
     
     if debug: 
         params = [{'k':None, 't':None, 'alpha':0.01, 'pos_weight':15, 'neg_weight':15}]
-        jobids = cloud.mp.map(eval_param, params, _fast_serialization=2)
+        jobids = cloud.mp.map(eval_param, params, _fast_serialization=0)
         for params, features, e, svm, result in cloud.mp.iresult(jobids):
             print params, "=>", result 
     else: 
         init_cloud() 
         params = gen_work_list()
         jobids = cloud.map(eval_param, params, _fast_serialization=2, _type='m1') 
-        
+        results = [] 
         print "Launched", len(params), "jobs, waiting for results..."
-        for params, features, e, weights, svm, result in cloud.iresult(jobids):
+        for params, result, e, svm,  weights in cloud.iresult(jobids):
             if result:
-                print "[Input] k=", params['k'], 't:', params['t']
+                print "[Input] k=", params['k'], 'whiten=', params['whiten'], 't=', params['t'], 'loss=', params['loss'], 'penalty=', params['penalty']
+                print weights 
                 print svm
                 print result 
+                results.append((params,result, e, svm,  weights))
                 
-
+        results.sort(cmp=lambda x, y: x[1]['accuracy'] - y[1]['accuracy'])
+        print "Best:"
+        for (params, result, e, svm, weights) in results[-5:-1]:
+            print "[Input] k=", params['k'], 'whiten=', params['whiten'], 't=', params['t'], 'loss=', params['loss'], 'penalty=', params['penalty']
+            print result 
+        
 
 def print_s3_hdf_files(): 
     bucket = get_hdf_bucket()

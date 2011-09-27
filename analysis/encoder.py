@@ -47,7 +47,7 @@ class FeatureEncoder():
         self.pca = state['pca']
   
     # if ncentroids = None, then don't cluster inputs
-    def __init__(self, X_train, whiten=False, n_centroids=None):
+    def __init__(self, X_train,  n_centroids=None, whiten=False):
         #if products: 
         #    X_train = pairwise_products(X_train)
             
@@ -79,7 +79,7 @@ class FeatureEncoder():
             
             cluster_restarts = 3
             cluster_iters = 50
-            n_random_indices = min(50000, nrows)
+            n_random_indices = min(100000, nrows)
             # k-means too slow, pull out a subset of the data 
             if nrows > n_random_indices:
                 indices = np.arange(nrows)
@@ -110,15 +110,11 @@ class FeatureEncoder():
                 Z = np.maximum(mean_dists_col - dists , 0)
             # probability distribution over centroids 
             elif transformation == 'prob':
-                dists = scipy.spatial.distance.cdist(Z, self.centroids)
-                if np.any(dists == 0):
-                    raise RuntimeError("Zero distance!")
-                inv_dists = 1 / dists 
+                dists = scipy.spatial.distance.cdist(Z, self.centroids, 'sqeuclidean')
+                sims = np.exp(-dists)
                 del dists
-                sum_inv_dists = np.sum(inv_dists, axis = 1)
-                sum_col = np.array([sum_inv_dists]).T
-                
-                Z = inv_dists / sum_col 
+                row_sums = np.sum(sims, axis = 1)
+                Z = sims / np.array([row_sums]).T
             # thresholded inner product with centroids 
             elif transformation == 'thresh':
                 inner_products = np.dot(Z, self.centroids.T)
