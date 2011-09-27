@@ -19,7 +19,7 @@ class Dataset():
             self.currency_pair = hdf.attrs["currency_pair"]
         else:
             currency_names = [
-                "AUD", "CAD", "EUR", "GBP", "NZD", "JPY", "EUR", "CHF" 
+                "AUD", "CAD", "EUR", "GBP", "NZD", "JPY", "EUR", "CHF", "USD", 
             ] 
             self.currency_pair = None 
             for part in filename.split("_"):

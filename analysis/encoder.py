@@ -33,12 +33,23 @@ def normalize(X, Xmean=None, Xstd=None):
     return X_normalized
 
 class FeatureEncoder():
-
+    def __getstate__(self): 
+        return {
+            'mean': self.mean_, 
+            'std': self.std_, 
+            'centroids': self.centroids, 
+            'pca': self.pca
+        }
+    def __setstate__(self, state):
+        self.mean_ = state['mean']
+        self.std_ = state['std']
+        self.centroids = state['centroids']
+        self.pca = state['pca']
   
     # if ncentroids = None, then don't cluster inputs
-    def __init__(self, X_train, products=False, whiten=False, n_centroids=None):
-        if products: 
-            X_train = pairwise_products(X_train)
+    def __init__(self, X_train, whiten=False, n_centroids=None):
+        #if products: 
+        #    X_train = pairwise_products(X_train)
             
         nrows = X_train.shape[0]
         nfeatures = X_train.shape[1]
@@ -66,8 +77,8 @@ class FeatureEncoder():
             else:
                 cluster_inputs = X_train_centered / self.std_
             
-            cluster_restarts = 5
-            cluster_iters = 200
+            cluster_restarts = 3
+            cluster_iters = 50
             n_random_indices = min(50000, nrows)
             # k-means too slow, pull out a subset of the data 
             if nrows > n_random_indices:
@@ -100,7 +111,10 @@ class FeatureEncoder():
             # probability distribution over centroids 
             elif transformation == 'prob':
                 dists = scipy.spatial.distance.cdist(Z, self.centroids)
+                if np.any(dists == 0):
+                    raise RuntimeError("Zero distance!")
                 inv_dists = 1 / dists 
+                del dists
                 sum_inv_dists = np.sum(inv_dists, axis = 1)
                 sum_col = np.array([sum_inv_dists]).T
                 
