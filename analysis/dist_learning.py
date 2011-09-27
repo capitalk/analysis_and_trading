@@ -182,12 +182,13 @@ def worker(params, features, train_files, test_files):
     # scramble the training the set order and split it into a half-training set
     # and a validation set to search for best hyper-parameters like 
     # alpha and class weights 
-    n = min(train_encoded.shape[0] / 2, 200000)
-    print "Creating validation set (size = ", n, ")"
+    ntrain = train_encoded.shape[0] 
+    nsubset = min(ntrain/2, 100000)
+    print "Creating validation set (size = ", nsubset, ")"
     
-    p = np.random.permutation(n)
-    half_train_indices = p[:n]
-    validation_indices = p[n:]
+    p = np.random.permutation(ntrain)
+    half_train_indices = p[:nsubset]
+    validation_indices = p[nsubset:(2*nsubset)]
     half_train = train_encoded[half_train_indices, :] 
     half_signal = train_signal[half_train_indices]
     
@@ -200,9 +201,6 @@ def worker(params, features, train_files, test_files):
     best_weights = None 
     best_alpha = None 
     best_result = {'accuracy': -1, 'ppt': -10000}
-
-    def is_better(new, curr):
-        return 
         
     print "Searching for best hyper-parameters" 
     for pos_weight in pos_weights: 
@@ -211,8 +209,7 @@ def worker(params, features, train_files, test_files):
                 model = scikits.learn.linear_model.SGDClassifier(loss=loss, penalty=penalty, alpha=alpha, shuffle=True)
                 weights = {0:1, -1:neg_weight, 1: pos_weight}
                 print "Training SVM with weights = ", weights, 'alpha=',alpha
-                #svm = scikits.learn.svm.LinearSVC(C = params['c'])
-            
+
                 model.fit(half_train, half_signal, class_weight = weights)
                 pred = model.predict(validation_set)
                 result = eval_prediction(validation_times, validation_bids, validation_offers, pred, validation_signal, ccy)
