@@ -2,7 +2,7 @@ import numpy as np
 import scipy 
 import scikits.learn
 from scikits.learn import * 
-
+from analysis import check_data 
 
 def mean(X):
     return np.mean(X, axis=0)
@@ -96,7 +96,7 @@ class FeatureEncoder():
     # 2) "An Analysis of Single-Layer Networks in Unsupervised Feature Learning"
     #    Triangle activation: max(mean_dist - dist[i], 0)
 
-    def encode(self, X, transformation='triangle', alpha=0.5):
+    def encode(self, X, transformation='triangle', alpha=0.5, validate=True):
         Z = normalize(X, self.mean_, self.std_)
         if self.pca:
             Z = self.pca.transform(Z)
@@ -104,6 +104,7 @@ class FeatureEncoder():
             # dist from centroid, with ~50% set to zero 
             if transformation == 'triangle':
                 dists = scipy.spatial.distance.cdist(Z, self.centroids)
+                if validate: check_data(dists)
                 mean_dists = np.mean(dists, axis=1, dtype='float')
                 mean_dists_col = np.array([mean_dists]).T
                 #only "greater than average" distances allowed to be active
@@ -111,12 +112,15 @@ class FeatureEncoder():
             # probability distribution over centroids 
             elif transformation == 'prob':
                 dists = scipy.spatial.distance.cdist(Z, self.centroids, 'sqeuclidean')
+                if validate: check_data(dists) 
                 sims = np.exp(-dists)
                 del dists
                 row_sums = np.sum(sims, axis = 1)
+
                 Z = sims / np.array([row_sums]).T
             # thresholded inner product with centroids 
             elif transformation == 'thresh':
                 inner_products = np.dot(Z, self.centroids.T)
+                if validate: check_data(inner_products)
                 Z = np.maximum(inner_products - alpha, 0)
         return Z

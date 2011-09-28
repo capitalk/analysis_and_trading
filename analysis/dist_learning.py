@@ -31,7 +31,7 @@ from expr_lang import Evaluator
 import signals     
 import simulate
 import encoder     
-
+from analysis import check_data 
 AWS_ACCESS_KEY_ID = 'AKIAITZSJIMPWRM54I4Q'
 AWS_SECRET_ACCESS_KEY = '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'
 
@@ -43,7 +43,7 @@ def get_hdf_bucket(bucket='capk-fxcm'):
     return conn.get_bucket(bucket)
 
 
-def load_s3_file(filename):     
+def load_s3_file(filename, max_failures=1):     
     print "Loading", filename, "from S3"
     max_failures = 3 
     fail_count = 0 
@@ -58,15 +58,15 @@ def load_s3_file(filename):
             key.get_contents_to_filename(local_filename)
             got_file = True 
         except: 
-            print "Download timed out, trying again"
+            print "Download from S3 failed" 
             fail_count += 1
             os.remove(local_filename) 
+            if fail_count >= max_failures: raise 
+            else: print "...trying again..."
+    return local_filename 
     
-    if got_file:
-        return local_filename 
-    else:
-        raise RuntimeError("Failed to download " + filename) 
-    
+def load_s3_files(filenames):
+    return [Dataset(load_s3_file(remote_filename)) for remote_filename in filenames]
     
 def load_s3_files_in_parallel(filenames):
     jobids = cloud.mp.map(load_s3_file, filenames)
@@ -88,22 +88,10 @@ def dataset_to_feature_matrix(d, features=features):
         result[:, idx] = vec
     return result
 
-def check_data(x):
-    inf_mask = np.isinf(x)
-    if np.any(inf_mask):
-        raise RuntimeError("Found inf: " + str(np.nonzero(inf_mask)))
-        
-    nan_mask = np.isnan(x)
-    if np.any(nan_mask):
-        raise RuntimeError("Found NaN: " + str(np.nonzero(nan_mask)))
-        
-    same_mask = (np.std(x, 0) <= 0.0000001)
-    if np.any(same_mask):
-        raise RuntimeError("Column all same: " + str(np.nonzero(same_mask)))
-    
 def load_files(files, features=features, signal_fn=signals.aggressive_profit): 
     print "Loading datasets..."
-    datasets = load_s3_files_in_parallel(files)
+    datasets = load_s3_files(files) 
+    #datasets = load_s3_files_in_parallel(files)
     print "Flattening datasets into feature matrices..." 
     matrices = [dataset_to_feature_matrix(d, features) for d in datasets] 
     feature_data = np.concatenate(matrices)
@@ -122,7 +110,8 @@ def load_files(files, features=features, signal_fn=signals.aggressive_profit):
     
 def eval_prediction(ts, bids, offers, pred, actual, currency_pair, cut=0.0015):
 
-    profit_series = simulate.aggressive_with_hard_thresholds(ts, bids, offers, pred, currency_pair, max_loss_prct = cut)
+    #profit_series = simulate.aggressive_with_hard_thresholds(ts, bids, offers, pred, currency_pair, max_loss_prct = cut, max_hold_time=60000)
+    profit_series = simulate.aggressive(ts, bids, offers, pred, currency_pair)
     sum_profit = np.sum(profit_series)
     ntrades = np.sum(profit_series != 0)
     if ntrades > 0: profit_per_trade = sum_profit / float(ntrades)
@@ -183,7 +172,7 @@ def worker(params, features, train_files, test_files):
     # and a validation set to search for best hyper-parameters like 
     # alpha and class weights 
     ntrain = train_encoded.shape[0] 
-    nsubset = min(ntrain/2, 100000)
+    nsubset = min(ntrain/2, 200000)
     print "Creating validation set (size = ", nsubset, ")"
     
     p = np.random.permutation(ntrain)
@@ -200,7 +189,7 @@ def worker(params, features, train_files, test_files):
     
     best_weights = None 
     best_alpha = None 
-    best_result = {'accuracy': -1, 'ppt': -10000}
+    best_value = -10000 #{'accuracy': -1, 'ppt': -10000}
         
     print "Searching for best hyper-parameters" 
     for pos_weight in pos_weights: 
@@ -214,30 +203,26 @@ def worker(params, features, train_files, test_files):
                 pred = model.predict(validation_set)
                 result = eval_prediction(validation_times, validation_bids, validation_offers, pred, validation_signal, ccy)
                 print result
-            
-                more_accurate = result['accuracy'] > best_result['accuracy']
-                as_accurate = result['accuracy'] == best_result['accuracy']
-                more_profit = result['ppt'] > best_result['ppt']
-                if more_accurate or (as_accurate and more_profit):
-                    best_result = result 
+                
+                curr_value = result['accuracy']
+                if best_value < curr_value:
+                    best_value = curr_value  
                     best_alpha = alpha 
                     best_weights = weights 
                     
     print "Fitting full model"
     
     svm = scikits.learn.linear_model.SGDClassifier(loss=loss, penalty=penalty, alpha=best_alpha, shuffle=True)
-    print best_alpha, svm.alpha 
-    svm.fit(train_encoded, train_signal, class_weight=best_weights)
-    print best_alpha, svm.alpha 
-    print "Evaluating full model"
     
+    svm.fit(train_encoded, train_signal, class_weight=best_weights)
+    
+    print "Evaluating full model"
     pred = svm.predict(test_encoded)
-    print best_alpha, svm.alpha 
     result = eval_prediction(test_times, test_bids, test_offers, pred, test_signal, ccy)
     print features
     print '[model]'
     print svm
-    print svm.coef_
+    print best_weights    
     print '[encoder]'
     print e.mean_
     print e.std_
@@ -250,15 +235,15 @@ def worker(params, features, train_files, test_files):
     return  params, result, e, svm,  best_weights
     
 def gen_work_list(): 
-    n_centroids = [None, 25, 50, 75] 
+    n_centroids = [None, 25, 50, 100] 
     #cs = [1.0, 5.0]
     #cut_thresholds = [.0005, .001, .0015,  0.002]
-    transformations = ['triangle', 'thresh', 'prob']
-    losses = ['hinge', 'modified_huber']
-    penalties = ['l2', 'l1', 'elasticnet']
-    alphas = [0.0001, 0.001, 0.01]
-    whiten = [False]
-    class_weights = [2, 4, 8, 16]
+    transformations = ['triangle', 'thresh']
+    losses = ['hinge']# , 'modified_huber']
+    penalties = ['l2'] #, 'l1', 'elasticnet']
+    alphas = [0.00001, 0.0001, 0.001, 0.01]
+    whiten = [False, True]
+    class_weights = [2, 4, 8, 16, 32]
     worklist = [] 
     for k in n_centroids:
         ts = transformations if k is not None else [None] 
@@ -280,9 +265,9 @@ def gen_work_list():
     return worklist 
 
 def init_cloud(): 
-    #cloud.config.force_serialize_debugging = False
-    #cloud.config.force_serialize_logging = False 
-    #cloud.config.commit()
+    cloud.config.force_serialize_debugging = False
+    cloud.config.force_serialize_logging = False 
+    cloud.config.commit()
     cloud.setkey(2579, "f228c0325cf687779264a0b0698b0cfe40148d65")
 
 def param_search(train_files, test_files, features=features, debug=False):
