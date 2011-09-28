@@ -43,7 +43,7 @@ def get_hdf_bucket(bucket='capk-fxcm'):
     return conn.get_bucket(bucket)
 
 
-def load_s3_file(filename, max_failures=1):     
+def load_s3_file(filename, max_failures=2):     
     print "Loading", filename, "from S3"
     max_failures = 3 
     fail_count = 0 
