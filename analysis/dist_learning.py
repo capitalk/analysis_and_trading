@@ -136,7 +136,7 @@ def eval_prediction(ts, bids, offers, pred, actual, currency_pair, cut=0.0015):
 def multiclass_output(model, X): 
     n = X.shape[0]
     scores = np.dot(X, model.coef_.T)
-    classes = list(mode.classes)
+    classes = list(model.classes)
     neutral_index = classes.index(0)
     pos_index = classes.index(1)
     neg_index = classes.index(-1)
@@ -256,8 +256,8 @@ def worker(params, features, train_files, test_files):
     print features
     print '[model]'
     print best_weights    
-    print svm
-    print svm.coef_ 
+    print model
+    print model.coef_ 
     print '[encoder]'
     print e.mean_
     print e.std_
@@ -266,8 +266,8 @@ def worker(params, features, train_files, test_files):
     print result 
     # have to clear sample weights since SGDClassifier stupidly keeps them 
     # after training 
-    svm.sample_weight = [] 
-    return  params, result, e, svm,  best_weights
+    model.sample_weight = [] 
+    return  params, result, e, model,  best_weights
     
 def gen_work_list(): 
 
