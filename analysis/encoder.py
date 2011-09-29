@@ -17,21 +17,28 @@ def pairwise_products(Z):
     m = Z.shape[0] 
     n = Z.shape[1]
     # pairwise products and original data 
-    prods = np.zeros( [m, n*n + n] )
-    prods[:, 0:n] = Z
+    
+    upper_triangle_count = (n*n - n) / 2 
+    result = np.zeros( [m, upper_triangle_count + 2*n ] )
+
+    result[:, 0:n] = Z
+    col = n
     for i in xrange(n):
-        for j in xrange(n):
-            prods[:, i*n+j] = Z[:, i] * Z[:, j]
-    return prods
+        x = Z[:, i] 
+        for j in xrange(0,i+1):
+            y = Z[:, j]
+            result[:, col] = x * y 
+            col += 1
+    return result
         
 # modifies X
-def normalize(X, Xmean=None, Xstd=None):
-    if Xmean is None: Xmean = mean(X)
-    X_centered =  X - Xmean
-    if Xstd is None: Xstd = std(X_centered, centered=True)
-    X_normalized = X_centered  / Xstd
-    return X_normalized
-
+def normalize(X, Xmean=None, Xstd=None, in_place = False):
+    if in_place: 
+        X -= Xmean
+        X /= Xstd
+        return X
+    else: return (X - Xmean) / Xstd
+        
 class FeatureEncoder():
     def __getstate__(self): 
         return {
@@ -47,9 +54,9 @@ class FeatureEncoder():
         self.pca = state['pca']
   
     # if ncentroids = None, then don't cluster inputs
-    def __init__(self, X_train,  n_centroids=None, whiten=False):
-        #if products: 
-        #    X_train = pairwise_products(X_train)
+    def __init__(self, X_train,  n_centroids=None, whiten=False, products=False):
+        self.compute_pairwise_products = products
+        if products: X_train = pairwise_products(X_train)
             
         nrows = X_train.shape[0]
         nfeatures = X_train.shape[1]
@@ -62,30 +69,29 @@ class FeatureEncoder():
         self.mean_ = mean(X_train)
         X_train_centered = X_train - self.mean_
         self.std_ = std(X_train_centered, centered=True)
+        X_train_centered /= self.std_
+        if whiten or n_centroids is not None: 
+            n_random_indices = min(600000, nrows)
+            print "[encoder] Reducing size from", nrows, "to", n_random_indices 
+            # k-means and PCA are too slow, pull out a subset of the data 
+            if nrows > n_random_indices:
+                indices = np.arange(nrows)
+                np.random.shuffle(indices)
+                random_index_subset = indices[0:n_random_indices]
+                X_train_centered = X_train_centered[random_index_subset, :] 
+                
         if whiten: 
-            X_train_normalized = X_train_centered / self.std_
-            self.pca = scikits.learn.decomposition.RandomizedPCA(whiten=True, n_components=nfeatures)
-            self.pca.fit(X_train_normalized)
+            self.pca = scikits.learn.decomposition.RandomizedPCA(whiten=True, n_components=min(50, nfeatures))
+            self.pca.fit(X_train_centered)
         else:
             self.pca = None 
             
         if n_centroids is None:
             self.centroids = None 
         else:
-            if whiten:
-                cluster_inputs = self.pca.transform(X_train_normalized)
-            else:
-                cluster_inputs = X_train_centered / self.std_
-            
+            cluster_inputs = self.pca.transform(X_train_centered) if whiten else X_train_centered 
             cluster_restarts = 3
             cluster_iters = 50
-            n_random_indices = min(100000, nrows)
-            # k-means too slow, pull out a subset of the data 
-            if nrows > n_random_indices:
-                indices = np.arange(nrows)
-                np.random.shuffle(indices)
-                random_index_subset = indices[0:n_random_indices]
-                cluster_inputs = cluster_inputs[random_index_subset, :] 
             (self.centroids, label, intertia) = scikits.learn.cluster.k_means(cluster_inputs, n_centroids, max_iter=cluster_iters, n_init=cluster_restarts)
             
         
@@ -96,10 +102,14 @@ class FeatureEncoder():
     # 2) "An Analysis of Single-Layer Networks in Unsupervised Feature Learning"
     #    Triangle activation: max(mean_dist - dist[i], 0)
 
-    def encode(self, X, transformation='triangle', alpha=0.5, validate=True):
-        Z = normalize(X, self.mean_, self.std_)
-        if self.pca:
-            Z = self.pca.transform(Z)
+    def encode(self, X, transformation='triangle', alpha=0.5, validate=True, in_place=False):
+        if self.compute_pairwise_products: 
+            oldshape = X.shape
+            X = pairwise_products(X)
+            print "Pairwise products", oldshape, "=>", X.shape
+            
+        Z = normalize(X, self.mean_, self.std_, in_place=in_place)
+        if self.pca: Z = self.pca.transform(Z)
         if self.centroids is not None:
             # dist from centroid, with ~50% set to zero 
             if transformation == 'triangle':

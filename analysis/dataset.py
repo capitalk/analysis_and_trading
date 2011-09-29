@@ -7,7 +7,7 @@ class Dataset():
         self.filename = filename 
         hdf = h5py.File(filename, 'r')
         self.hdf = hdf 
-        self.t = hdf['t/100ms'][...]
+        self.t = hdf['t/100ms'][:]
         self.indices = np.arange(len(self.t))
         self.features = list(hdf.attrs['features'])
         self.reducers = list(hdf.attrs['reducers'])

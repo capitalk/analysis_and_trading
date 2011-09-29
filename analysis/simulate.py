@@ -154,7 +154,7 @@ def aggressive_with_hard_thresholds(ts, bids, offers,  signal, currency_pair,
         window_time=1000, 
         max_hold_time = 30000, 
         min_window_signals=3, 
-        max_loss_prct = 0.0010, 
+        max_loss_prct = 0.0015, 
         min_profit_prct=0.0002, 
         slippage = 0.00001, 
         usd_transaction_cost=13):
@@ -250,13 +250,6 @@ def aggressive_with_hard_thresholds(ts, bids, offers,  signal, currency_pair,
     usd_profits = profits / conversion_rate 
     return usd_profits 
 
-# wrapper for simulate profits so we don't have to explicitly pass bids, offers, times 
-#def aggressive_with_hard_thresholds_dataset(dataset, signal, start_index=0):
-#    bids = dataset['bid/100ms'][start_index:]
-#    offers = dataset['offer/100ms'][start_index:]
-#    ts = dataset['t'][start_index:]
-#    return simulate_profits(ts, bids, offers, signal, d.currency_pair)
-        
     
 def profit_vs_threshold(dataset, signal): 
     thresholds = np.arange(0.00005, 0.01, 0.00005)
