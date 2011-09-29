@@ -110,12 +110,13 @@ def load_files(files, features=features, signal_fn=signals.aggressive_profit):
     
 def eval_prediction(ts, bids, offers, pred, actual, currency_pair, cut=0.0015):
 
-    #profit_series = simulate.aggressive_with_hard_thresholds(ts, bids, offers, pred, currency_pair, max_loss_prct = cut, max_hold_time=60000)
-    profit_series = simulate.aggressive(ts, bids, offers, pred, currency_pair)
+    profit_series = simulate.aggressive_with_hard_thresholds(ts, bids, offers, pred, currency_pair, max_loss_prct = cut, max_hold_time=60000)
+    #profit_series, _, _ = simulate.aggressive(ts, bids, offers, pred, currency_pair)
     sum_profit = np.sum(profit_series)
     ntrades = np.sum(profit_series != 0)
     if ntrades > 0: profit_per_trade = sum_profit / float(ntrades)
     else: profit_per_trade = 0 
+    
     raw_accuracy, tp, fp, tn, fn, tz, fz = signals.accuracy(actual, pred)
     result = {
         'profit': sum_profit, 
@@ -183,9 +184,6 @@ def worker(params, features, train_files, test_files):
     
     validation_set = train_encoded[validation_indices, :]
     validation_signal = train_signal[validation_indices] 
-    validation_times = train_times[validation_indices]
-    validation_bids = train_bids[validation_indices]
-    validation_offers = train_offers[validation_indices] 
     
     best_weights = None 
     best_alpha = None 
@@ -201,10 +199,11 @@ def worker(params, features, train_files, test_files):
 
                 model.fit(half_train, half_signal, class_weight = weights)
                 pred = model.predict(validation_set)
-                result = eval_prediction(validation_times, validation_bids, validation_offers, pred, validation_signal, ccy)
+                # accuracy, tp, fp, etc...
+                result  = signals.accuracy(actual, pred)
                 print result
                 
-                curr_value = result['accuracy']
+                curr_value = result[0]
                 if best_value < curr_value:
                     best_value = curr_value  
                     best_alpha = alpha 
@@ -235,15 +234,20 @@ def worker(params, features, train_files, test_files):
     return  params, result, e, svm,  best_weights
     
 def gen_work_list(): 
-    n_centroids = [None, 25, 50, 100] 
+
+#    n_centroids = [None, 25, 50, 100] 
+    n_centroids = [None, 25] 
     #cs = [1.0, 5.0]
     #cut_thresholds = [.0005, .001, .0015,  0.002]
-    transformations = ['triangle', 'thresh']
+    #transformations = ['triangle', 'thresh']
+    transformations = ['triangle'] 
+    
     losses = ['hinge']# , 'modified_huber']
-    penalties = ['l2'] #, 'l1', 'elasticnet']
-    alphas = [0.00001, 0.0001, 0.001, 0.01]
+    penalties = ['l2', 'elasticnet'] #, 'l1', 'elasticnet']
+    
+    alphas = [0.00001, 0.0001, 0.001] #, 0.01]
     whiten = [False, True]
-    class_weights = [2, 4, 8, 16, 32]
+    class_weights = [2, 8, 32]
     worklist = [] 
     for k in n_centroids:
         ts = transformations if k is not None else [None] 
@@ -297,7 +301,7 @@ def param_search(train_files, test_files, features=features, debug=False):
                 print result 
                 results.append((params,result, e, svm,  weights))
                 
-        results.sort(cmp=lambda x, y: x[1]['accuracy'] - y[1]['accuracy'])
+        results.sort(cmp=lambda x, y: int(x[1]['accuracy'] - y[1]['accuracy']))
         print "Best:"
         for (params, result, e, svm, weights) in results[-5:-1]:
             print "[Input] k=", params['k'], 'whiten=', params['whiten'], 't=', params['t'], 'loss=', params['loss'], 'penalty=', params['penalty']
