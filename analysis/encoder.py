@@ -102,7 +102,7 @@ class FeatureEncoder():
     # 2) "An Analysis of Single-Layer Networks in Unsupervised Feature Learning"
     #    Triangle activation: max(mean_dist - dist[i], 0)
 
-    def encode(self, X, transformation='triangle', alpha=0.5, validate=True, in_place=False):
+    def encode(self, X, transformation='triangle', alpha=0.5, validate=True, in_place=False, unit_norm=True):
         if self.compute_pairwise_products: 
             oldshape = X.shape
             X = pairwise_products(X)
@@ -133,4 +133,7 @@ class FeatureEncoder():
                 inner_products = np.dot(Z, self.centroids.T)
                 if validate: check_data(inner_products)
                 Z = np.maximum(inner_products - alpha, 0)
+        if unit_norm:
+            norms = np.apply_along_axis(np.linalg.norm, arr=Z, axis=1)
+            Z /= np.array([norms]).T
         return Z

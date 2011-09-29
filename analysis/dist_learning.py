@@ -168,7 +168,7 @@ def worker(params, features, train_files, test_files):
     print "pca :", e.pca 
     
     print "Encoding training data" 
-    train_encoded = e.encode(train_data, transformation = params['t'], in_place=True)
+    train_encoded = e.encode(train_data, transformation = params['t'], in_place=True, unit_norm=params['unit_norm'])
     print train_encoded[0, :]
     print train_encoded[500, :] 
     del train_data
@@ -204,7 +204,7 @@ def worker(params, features, train_files, test_files):
     
     def mk_model(alpha, nrows = None):
         if nrows is None: n_iter = 5
-        else: n_iter = np.ceil(10**6 / nrows)
+        else: n_iter = int(np.ceil(10**6 / float(nrows)))
         return scikits.learn.linear_model.SGDClassifier(loss=loss, penalty=penalty, alpha=alpha, shuffle=True, fit_intercept=False, n_iter=n_iter)
         
     print "Searching for best hyper-parameters" 
@@ -241,7 +241,7 @@ def worker(params, features, train_files, test_files):
     test_data, test_signal, test_times, test_bids, test_offers, _ = load_files(test_files)
     
     print "Encoding test data" 
-    test_encoded = e.encode(test_data, transformation = params['t'], in_place=True)
+    test_encoded = e.encode(test_data, transformation = params['t'], in_place=True, unit_norm=params['unit_norm'])
     print test_encoded[0, :]
     print test_encoded[500, :]
     del test_data 
@@ -272,12 +272,12 @@ def worker(params, features, train_files, test_files):
 def gen_work_list(): 
 
 #    n_centroids = [None, 25, 50, 100] 
-    n_centroids = [None, 5, 10, 20, 40]
+    n_centroids = [None, 10, 20, 40]
     #cs = [1.0, 5.0]
     #cut_thresholds = [.0005, .001, .0015,  0.002]
     #transformations = ['triangle', 'thresh']
     transformations = ['triangle', 'thresh'] 
-    
+    unit_norm = [False, True] 
     losses = ['hinge']# , 'modified_huber']
     penalties = ['l2']#, 'l1'] #'elasticnet'] #, 'l1', 'elasticnet']
     pairwise_products = [False, True] 
@@ -292,18 +292,20 @@ def gen_work_list():
                 for w in whiten: 
                     for loss in losses:
                         for p in penalties:
-                            params = {
-                                'penalty': p, 
-                                'loss': loss, 
-                                'k': k, 
-                                't': t, 
-                                'alphas': alphas, 
-                                'whiten': w, 
-                                'pos_weights': class_weights, 
-                                'neg_weights': class_weights,
-                                'pairwise_products': prod,
-                            }
-                            worklist.append(params)
+                            for u in unit_norm:
+                                params = {
+                                    'penalty': p, 
+                                    'loss': loss, 
+                                    'k': k, 
+                                    't': t, 
+                                    'alphas': alphas, 
+                                    'whiten': w, 
+                                    'pos_weights': class_weights, 
+                                    'neg_weights': class_weights,
+                                    'pairwise_products': prod,
+                                    'unit_norm': u, 
+                                }
+                                worklist.append(params)
     return worklist 
 
 def init_cloud(): 
@@ -341,13 +343,20 @@ def param_search(train_files, test_files, features=features, debug=False):
                 print svm
                 print result 
                 results.append((params,result, e, svm,  weights))
-                
-        results.sort(cmp=lambda x, y: np.sign(x[1]['accuracy'] - y[1]['accuracy']))
+        
+        
+        def cmp(x,y):
+            return int(np.sign(x[1]['accuracy'] - y[1]['accuracy']))
+        results.sort(cmp=cmp)
+        
         print "Best:"
         for (params, result, e, svm, weights) in results[-5:-1]:
             print_params(params)            
             print result 
-        
+        accs = [x['accuracy'] for x in results]
+        ppts = [x['ppt'] for x in results]
+        print accs
+        print ppts 
 
 def print_s3_hdf_files(): 
     bucket = get_hdf_bucket()
