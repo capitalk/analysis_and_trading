@@ -176,8 +176,8 @@ def worker(params, features, train_files, test_files):
     
     # sometimes we get a list of weights and sometimes we get just one weight
     # this code is written to work in either case 
-    pos_weights = [params['pos_weight']] if 'pos_weight' in params else params['pos_weights']
-    #neg_weights = [params['neg_weight']] if 'neg_weight' in params else params['neg_weights']
+    class_weights = [params['class_weight']] if 'class_weight' in params else params['class_weights']
+    
     alphas = [params['alpha']] if 'alpha' in params else params['alphas']
     loss = params['loss']
     penalty = params['penalty']
@@ -208,10 +208,11 @@ def worker(params, features, train_files, test_files):
         return scikits.learn.linear_model.SGDClassifier(loss=loss, penalty=penalty, alpha=alpha, shuffle=True, fit_intercept=False, n_iter=n_iter)
         
     print "Searching for best hyper-parameters" 
-    for pos_weight in pos_weights: 
-        neg_weight = pos_weight 
+    for class_weight in class_weights: 
+        pos_weight = class_weight
+        neg_weight = class_weight 
         # ignore possibility of giving different weights to two classes 
-        #for neg_weight in neg_weights: 
+        
         for alpha in alphas: 
             model = mk_model(alpha, nsubset)
             weights = {0:1, -1:neg_weight, 1: pos_weight}
@@ -300,8 +301,7 @@ def gen_work_list():
                                     't': t, 
                                     'alphas': alphas, 
                                     'whiten': w, 
-                                    'pos_weights': class_weights, 
-                                    'neg_weights': class_weights,
+                                    'class_weights': class_weights,
                                     'pairwise_products': prod,
                                     'unit_norm': u, 
                                 }
@@ -314,8 +314,8 @@ def init_cloud():
     cloud.config.commit()
     cloud.setkey(2579, "f228c0325cf687779264a0b0698b0cfe40148d65")
 
-def print_params(params):
-    print "[Input] k:", params['k'], 'whiten:', params['whiten'], 't:', params['t'], 'loss:', params['loss'], 'penalty:', params['penalty'], 'prod:', params['pairwise_products']
+#def print_params(params):
+#    print "[Input] k:", params['k'], 'whiten:', params['whiten'], 't:', params['t'], 'loss:', params['loss'], 'penalty:', params['penalty'], 'prod:', params['pairwise_products']
 
 def param_search(train_files, test_files, features=features, debug=False):
     print "Features:", features 
@@ -338,7 +338,7 @@ def param_search(train_files, test_files, features=features, debug=False):
         print "Launched", len(params), "jobs, waiting for results..."
         for params, result, e, svm,  weights in cloud.iresult(jobids):
             if result:
-                print_params(params)
+                print params
                 print weights 
                 print svm
                 print result 
@@ -351,7 +351,7 @@ def param_search(train_files, test_files, features=features, debug=False):
         
         print "Best:"
         for (params, result, e, svm, weights) in results[-5:-1]:
-            print_params(params)            
+            print params            
             print result 
         accs = [x['accuracy'] for x in results]
         ppts = [x['ppt'] for x in results]
