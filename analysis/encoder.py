@@ -71,7 +71,7 @@ class FeatureEncoder():
         self.std_ = std(X_train_centered, centered=True)
         X_train_centered /= self.std_
         if whiten or n_centroids is not None: 
-            n_random_indices = min(600000, nrows)
+            n_random_indices = min(500000, nrows)
             print "[encoder] Reducing size from", nrows, "to", n_random_indices 
             # k-means and PCA are too slow, pull out a subset of the data 
             if nrows > n_random_indices:
