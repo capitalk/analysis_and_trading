@@ -171,46 +171,55 @@ def worker(params, features, train_files, test_files):
     # and a validation set to search for best hyper-parameters like 
     # alpha and class weights 
     ntrain = train_encoded.shape[0] 
-    nsubset = min(ntrain/2, 200000)
-    print "Creating validation set (size = ", nsubset, ")"
     
-    p = np.random.permutation(ntrain)
-    half_train_indices = p[:nsubset]
-    validation_indices = p[nsubset:(2*nsubset)]
-    half_train = train_encoded[half_train_indices, :] 
-    half_signal = train_signal[half_train_indices]
-    
-    validation_set = train_encoded[validation_indices, :]
-    validation_signal = train_signal[validation_indices] 
+    def mk_model(alpha):
+        return balanced_ensemble.Ensemble(num_classifiers=cascade_length, loss=loss, penalty=penalty, alpha=alpha, shuffle=True)
     
     #best_weights = None 
     best_alpha = None 
     best_value = -10000 #{'accuracy': -1, 'ppt': -10000}
     
-    def mk_model(alpha):
-        return sgd_cascade.Cascade(num_classifiers=cascade_length, loss=loss, penalty=penalty, alpha=alpha, shuffle=True, fit_intercept=False)
-        #if nrows is None: n_iter = 5
-        #else: n_iter = int(np.ceil(10**6 / float(nrows)))
-        #return scikits.learn.linear_model.SGDClassifier(loss=loss, penalty=penalty, alpha=alpha, shuffle=True, fit_intercept=False, n_iter=n_iter)
+    if len(alphas) == 1:
+        best_alpha = alphas[0]
+    else:
+        print "Searching for best hyper-parameters" 
+        nsubset = min(ntrain/2, 200000)
+        print "Creating validation set (size = ", nsubset, ")"
         
-    print "Searching for best hyper-parameters" 
-    for alpha in alphas: 
-        model = mk_model(alpha)
-        #weights = {0:1, -1:neg_weight, 1: pos_weight}
-        print "Training SVM with alpha=",alpha #weights = 
-
-        model.fit(half_train, half_signal)
-        # pred = model.predict(validation_set) 
-        pred = model.predict(validation_set) #multiclass_output(model, validation_set)
-        # accuracy, tp, fp, etc...
-        result = signals.accuracy(validation_signal, pred)
-        print result
-            
-        curr_value = result[0]
-        if best_value < curr_value:
-            best_value = curr_value  
-            best_alpha = alpha 
-
+        p = np.random.permutation(ntrain)
+        half_train_indices = p[:nsubset]
+        validation_indices = p[nsubset:(2*nsubset)]
+        half_train = train_encoded[half_train_indices, :] 
+        half_signal = train_signal[half_train_indices]
+        
+        validation_set = train_encoded[validation_indices, :]
+        validation_signal = train_signal[validation_indices] 
+        
+        for alpha in alphas: 
+            model = mk_model(alpha)
+            #weights = {0:1, -1:neg_weight, 1: pos_weight}
+            print "Training SVM with alpha=",alpha #weights = 
+    
+            model.fit(half_train, half_signal)
+            # pred = model.predict(validation_set) 
+            pred = model.predict(validation_set) #multiclass_output(model, validation_set)
+            # accuracy, tp, fp, etc...
+            result = signals.accuracy(validation_signal, pred)
+            print result
+                
+            curr_value = result[0]
+            if best_value < curr_value:
+                best_value = curr_value  
+                best_alpha = alpha 
+        
+        # clear some space 
+        del half_train
+        del half_signal
+        del validation_indices
+        del p 
+        del validation_set
+        del validation_signal 
+        
     print "Fitting full model, alpha=", best_alpha
     
     model = mk_model(best_alpha)
@@ -251,17 +260,18 @@ def worker(params, features, train_files, test_files):
 def gen_work_list(): 
 
 #    n_centroids = [None, 25, 50, 100] 
-    n_centroids = [None, 10, 20, 40]
+    n_centroids = [None, 20, 40]
     #cs = [1.0, 5.0]
     #cut_thresholds = [.0005, .001, .0015,  0.002]
     #transformations = ['triangle', 'thresh']
     transformations = ['triangle'] #, 'thresh'] 
     unit_norm = [False, True] 
     losses = ['hinge']# , 'modified_huber']
-    penalties = ['l2', 'l1']#, 'l1'] #'elasticnet'] #, 'l1', 'elasticnet']
-    pairwise_products = [False, True] 
-    alphas = 10.0 ** np.arange(-7, -2)
-    cascade_length = [2,4,8]
+    penalties = ['l2']#, 'l1']#, 'l1'] #'elasticnet'] #, 'l1', 'elasticnet']
+    pairwise_products = [False]#, True] 
+    alphas = [0.00001] #10.0 ** np.arange(-7, -3)
+    num_classifiers = [8, 16, 32, 64]
+    #cascade_length = [3,4,5]
     whiten = [False, True]
     #class_weights = [8, 16] #, 32]
     worklist = [] 
@@ -273,7 +283,7 @@ def gen_work_list():
                     for loss in losses:
                         for p in penalties:
                             for u in unit_norm:
-                                for c in cascade_length:
+                                for n in num_classifiers:
                                     params = {
                                         'penalty': p, 
                                         'loss': loss, 
@@ -284,7 +294,8 @@ def gen_work_list():
      #                                   'class_weights': class_weights,
                                         'pairwise_products': prod,
                                         'unit_norm': u, 
-                                        'cascade_length': c,
+                                        'num_classifiers': n,
+        #                                'cascade_length': c,
                                     }
                                     worklist.append(params)
     return worklist 
@@ -328,7 +339,7 @@ def param_search(train_files, test_files, features=features, debug=False):
             return int(np.sign(x['result']['accuracy'] - y['result']['accuracy']))
         results.sort(cmp=cmp)
         print "Best:"
-        for item in results[-6:-1]:
+        for item in results[-6:]:
             print item['params']
             print item['result']
         accs = [x['result']['accuracy'] for x in results]
