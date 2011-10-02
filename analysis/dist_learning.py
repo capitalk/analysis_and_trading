@@ -32,6 +32,7 @@ import signals
 import simulate
 import encoder     
 import sgd_cascade
+import balanced_ensemble
 from dataset import Dataset 
 from expr_lang import Evaluator 
 from analysis import check_data 
@@ -55,6 +56,7 @@ def load_s3_file(filename, max_failures=2):
     while fail_count < max_failures and not got_file:
         bucket = get_hdf_bucket()
         key = bucket.get_key(filename) 
+        if key is None: raise RuntimeError("file not found: " + filename)
         (fileid, local_filename) = tempfile.mkstemp(prefix=filename)
         print "Created local file:", local_filename 
         print "Copying data from S3"
@@ -139,7 +141,7 @@ def worker(params, features, train_files, test_files):
     print params 
     print "Loading training data..."
     train_data, train_signal, train_times, train_bids, train_offers, currencies = load_files(train_files) 
-    
+    if 'target' in params: train_signal = (train_signal == params['target']).astype('int')
     # assume all files from same currency pair 
     ccy = currencies[0]
     k = params['k']
@@ -163,72 +165,79 @@ def worker(params, features, train_files, test_files):
     # this code is written to work in either case 
     #class_weights = [params['class_weight']] if 'class_weight' in params else params['class_weights']
     
-    alphas = [params['alpha']] if 'alpha' in params else params['alphas']
-    loss = params['loss']
-    penalty = params['penalty']
-    cascade_length = params['cascade_length']
+    #alphas = [params['alpha']] if 'alpha' in params else params['alphas']
+    #loss = params['loss']
+    #penalty = params['penalty']
     # scramble the training the set order and split it into a half-training set
     # and a validation set to search for best hyper-parameters like 
     # alpha and class weights 
     ntrain = train_encoded.shape[0] 
     
-    def mk_model(alpha):
-        return balanced_ensemble.Ensemble(num_classifiers=cascade_length, loss=loss, penalty=penalty, alpha=alpha, shuffle=True)
-    
+    model_params = {}
+    if 'loss' in params: model_params['loss'] = params['loss']
+    if 'C' in params: model_params['C'] = params['C']
+    if 'penalty' in params: model_params['penalty']  = params['penalty']
+    if 'shuffle' in params: model_params['shuffle'] = params['shuffle']
+    if 'neutral_weight' in params: model_params['neutral_weight'] = params['neutral_weight']
+    #def mk_model(alpha):
+    #    return balanced_ensemble.Ensemble(num_classifiers=params['num_classifiers'],  **model_params) #alpha=alpha,
+    def mk_model():
+        return balanced_ensemble.Ensemble(num_classifiers=params['num_classifiers'], **model_params)
     #best_weights = None 
-    best_alpha = None 
-    best_value = -10000 #{'accuracy': -1, 'ppt': -10000}
+    #best_alpha = None 
+    #best_value = -10000 #{'accuracy': -1, 'ppt': -10000}
     
-    if len(alphas) == 1:
-        best_alpha = alphas[0]
-    else:
-        print "Searching for best hyper-parameters" 
-        nsubset = min(ntrain/2, 200000)
-        print "Creating validation set (size = ", nsubset, ")"
+    #if len(alphas) == 1:
+    #    best_alpha = alphas[0]
+    #else:
+    #    print "Searching for best hyper-parameters" 
+    #    nsubset = min(ntrain/2, 200000)
+    #    print "Creating validation set (size = ", nsubset, ")"
         
-        p = np.random.permutation(ntrain)
-        half_train_indices = p[:nsubset]
-        validation_indices = p[nsubset:(2*nsubset)]
-        half_train = train_encoded[half_train_indices, :] 
-        half_signal = train_signal[half_train_indices]
+    #    p = np.random.permutation(ntrain)
+    #    half_train_indices = p[:nsubset]
+    #    validation_indices = p[nsubset:(2*nsubset)]
+    #    half_train = train_encoded[half_train_indices, :] 
+    #    half_signal = train_signal[half_train_indices]
         
-        validation_set = train_encoded[validation_indices, :]
-        validation_signal = train_signal[validation_indices] 
+    #    validation_set = train_encoded[validation_indices, :]
+    #    validation_signal = train_signal[validation_indices] 
         
-        for alpha in alphas: 
-            model = mk_model(alpha)
-            #weights = {0:1, -1:neg_weight, 1: pos_weight}
-            print "Training SVM with alpha=",alpha #weights = 
+    #    for alpha in alphas: 
+    #        model = mk_model(alpha)
+    #        #weights = {0:1, -1:neg_weight, 1: pos_weight}
+    #        print "Training SVM with alpha=",alpha #weights = 
     
-            model.fit(half_train, half_signal)
+    #        model.fit(half_train, half_signal)
             # pred = model.predict(validation_set) 
-            pred = model.predict(validation_set) #multiclass_output(model, validation_set)
+    #        pred = model.predict(validation_set) #multiclass_output(model, validation_set)
             # accuracy, tp, fp, etc...
-            result = signals.accuracy(validation_signal, pred)
-            print result
+    #        result = signals.accuracy(validation_signal, pred)
+    #        print result
                 
-            curr_value = result[0]
-            if best_value < curr_value:
-                best_value = curr_value  
-                best_alpha = alpha 
+    #        curr_value = result[0]
+    #        if best_value < curr_value:
+    #            best_value = curr_value  
+    #            best_alpha = alpha 
         
         # clear some space 
-        del half_train
-        del half_signal
-        del validation_indices
-        del p 
-        del validation_set
-        del validation_signal 
+    #    del half_train
+    #    del half_signal
+    #    del validation_indices
+    #    del p 
+    #    del validation_set
+    #    del validation_signal 
         
-    print "Fitting full model, alpha=", best_alpha
+    #print "Fitting full model, alpha=", best_alpha
     
-    model = mk_model(best_alpha)
+    model = mk_model()
     model.fit(train_encoded, train_signal)
     del train_encoded
     del train_signal 
     
     print "Loading testing data..."
     test_data, test_signal, test_times, test_bids, test_offers, _ = load_files(test_files)
+    if 'target' in params: test_signal = (test_signal == params['target']).astype('int')
     
     print "Encoding test data" 
     test_encoded = e.encode(test_data, transformation = params['t'], in_place=True, unit_norm=params['unit_norm'])
@@ -238,7 +247,8 @@ def worker(params, features, train_files, test_files):
                     
     print "Evaluating full model"
     #pred = svm.predict(test_encoded)
-    pred = model.predict(test_encoded) 
+    pred, probs = model.predict(test_encoded, return_probs=True) 
+    print "Probabilities: ", probs[:100]
     
     print "predictions: ", pred[1:50] 
     result = eval_prediction(test_times, test_bids, test_offers, pred, test_signal, ccy)
@@ -260,19 +270,23 @@ def worker(params, features, train_files, test_files):
 def gen_work_list(): 
 
 #    n_centroids = [None, 25, 50, 100] 
-    n_centroids = [None, 20, 40]
-    #cs = [1.0, 5.0]
     #cut_thresholds = [.0005, .001, .0015,  0.002]
     #transformations = ['triangle', 'thresh']
-    transformations = ['triangle'] #, 'thresh'] 
+    transformations = ['triangle'] 
+    n_centroids = [None, 40]  
+    targets = [1, -1]
     unit_norm = [False, True] 
-    losses = ['hinge']# , 'modified_huber']
-    penalties = ['l2']#, 'l1']#, 'l1'] #'elasticnet'] #, 'l1', 'elasticnet']
-    pairwise_products = [False]#, True] 
-    alphas = [0.00001] #10.0 ** np.arange(-7, -3)
-    num_classifiers = [8, 16, 32, 64]
-    #cascade_length = [3,4,5]
+    pairwise_products = [False, True] 
     whiten = [False, True]
+    neutral_weights = [2, 4, 8] 
+    num_classifiers = [32, 128]
+    cs = [0.1, 1.0, 10.0]
+    #losses = ['hinge']# , 'modified_huber']
+    #penalties = ['l2']#, 'l1']#, 'l1'] #'elasticnet'] #, 'l1', 'elasticnet']
+    
+    #alphas = [0.00001] #10.0 ** np.arange(-7, -3)
+    
+    #cascade_length = [3,4,5]
     #class_weights = [8, 16] #, 32]
     worklist = [] 
     for prod in pairwise_products: 
@@ -280,24 +294,26 @@ def gen_work_list():
             ts = transformations if k is not None else [None] 
             for t in ts: 
                 for w in whiten: 
-                    for loss in losses:
-                        for p in penalties:
-                            for u in unit_norm:
-                                for n in num_classifiers:
-                                    params = {
-                                        'penalty': p, 
-                                        'loss': loss, 
-                                        'k': k, 
-                                        't': t, 
-                                        'alphas': alphas, 
-                                        'whiten': w, 
-     #                                   'class_weights': class_weights,
-                                        'pairwise_products': prod,
-                                        'unit_norm': u, 
-                                        'num_classifiers': n,
-        #                                'cascade_length': c,
-                                    }
-                                    worklist.append(params)
+                    for u in unit_norm:
+                        for n in num_classifiers:
+                            for c in cs:
+                                for target in targets:
+                                    for neutral_weight in neutral_weights:
+                                        params = {
+                                            'target': target, 
+                                            'k': k, 
+                                            't': t, 
+                                            'whiten': w, 
+                                            'pairwise_products': prod,
+                                            'unit_norm': u, 
+                                            'num_classifiers': n,
+                                            'C': c, 
+                                            'neutral_weight': neutral_weight,
+                                        }
+                                        worklist.append(params)
+
+                        #for loss in losses:
+                        #for p in penalties:
     return worklist 
 
 def init_cloud(): 
@@ -317,18 +333,19 @@ def param_search(train_files, test_files, features=features, debug=False):
     def eval_param(p): 
         return worker(p, features, train_files, test_files)
     
+    params = gen_work_list()
     if debug: 
-        params = [{'k':None, 't':None, 'alpha':0.01, 'pos_weight':15, 'neg_weight':15}]
-        jobids = cloud.mp.map(eval_param, params, _fast_serialization=0)
-        for params, features, e, svm, result in cloud.mp.iresult(jobids):
+        print "[Debug mode]"
+        result_list = map(eval_param, params[:1])
+        for params, features, e, svm, result in result_list:
             print params, "=>", result 
     else: 
         init_cloud() 
-        params = gen_work_list()
-        jobids = cloud.map(eval_param, params, _fast_serialization=2, _type='m1') 
+        label = ", ".join(train_files)
+        jobids = cloud.map(eval_param, params, _fast_serialization=2, _type='m1', _label=label) 
         results = [] 
         print "Launched", len(params), "jobs, waiting for results..."
-        for params, result, e, model in cloud.iresult(jobids):
+        for params, result, e, model in cloud.iresult(jobids, num_in_parallel=10):
             if result:
                 print params
                 print model
@@ -337,16 +354,19 @@ def param_search(train_files, test_files, features=features, debug=False):
                 
         def cmp(x,y):
             return int(np.sign(x['result']['accuracy'] - y['result']['accuracy']))
+        
         results.sort(cmp=cmp)
-        print "Best:"
-        for item in results[-6:]:
-            print item['params']
-            print item['result']
+        
         accs = [x['result']['accuracy'] for x in results]
         ppts = [x['result']['ppt'] for x in results]
         print accs
         print ppts 
-
+        
+        print "Best:"
+        for item in results[-10:]:
+            print item['params']
+            print item['result']
+        
 def print_s3_hdf_files(): 
     bucket = get_hdf_bucket()
     filenames = [k.name for k in bucket.get_all_keys() if k.name.endswith('hdf')]

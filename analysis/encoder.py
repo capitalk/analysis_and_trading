@@ -56,8 +56,7 @@ class FeatureEncoder():
     # if ncentroids = None, then don't cluster inputs
     def __init__(self, X_train,  n_centroids=None, whiten=False, products=False):
         self.compute_pairwise_products = products
-        if products: X_train = pairwise_products(X_train)
-            
+        
         nrows = X_train.shape[0]
         nfeatures = X_train.shape[1]
         
@@ -70,6 +69,7 @@ class FeatureEncoder():
         X_train_centered = X_train - self.mean_
         self.std_ = std(X_train_centered, centered=True)
         X_train_centered /= self.std_
+        if products: X_train_centered = pairwise_products(X_train_centered)
         if whiten or n_centroids is not None: 
             n_random_indices = min(500000, nrows)
             print "[encoder] Reducing size from", nrows, "to", n_random_indices 
@@ -103,12 +103,11 @@ class FeatureEncoder():
     #    Triangle activation: max(mean_dist - dist[i], 0)
 
     def encode(self, X, transformation='triangle', alpha=0.5, validate=True, in_place=False, unit_norm=True):
-        if self.compute_pairwise_products: 
-            oldshape = X.shape
-            X = pairwise_products(X)
-            print "Pairwise products", oldshape, "=>", X.shape
-            
         Z = normalize(X, self.mean_, self.std_, in_place=in_place)
+        if self.compute_pairwise_products: 
+            Z = pairwise_products(Z)
+            print "Pairwise products", X.shape, "=>", Z.shape
+        
         if self.pca: Z = self.pca.transform(Z)
         if self.centroids is not None:
             # dist from centroid, with ~50% set to zero 
