@@ -9,7 +9,7 @@ class Ensemble:
     # weighting = 'uniform' | 'accuracy' 
     # nfeatures = percent | 'sqrt' | 'log'
     # thresh = percent of votes required for a non-zero class 
-    def __init__(self, bag_prct=0.75, num_classifiers = 100, weighting='f-score', thresh=0.6, recall_importance=0.5, nfeatures='sqrt', neutral_weight=1, **model_keywords):
+    def __init__(self, bag_prct=0.75, num_classifiers = 100, weighting='f-score', thresh=0.6, recall_importance=0.25, nfeatures='sqrt', neutral_weight=1, **model_keywords):
         self.models = [] 
         self.weighting = weighting
         self.model_weights = None

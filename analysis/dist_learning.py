@@ -279,9 +279,9 @@ def gen_work_list():
     unit_norm = [False] #, True] 
     pairwise_products = [ False, True] 
     whiten = [True, False]
-    neutral_weights = [1, 4, 8]
+    neutral_weights = [1, 2, 3, 4]
     num_classifiers = [8, 32, 128]
-    cs = [0.1, 1.0, 10.0]
+    cs = [0.1, 1.0]
     #losses = ['hinge']# , 'modified_huber']
     #penalties = ['l2']#, 'l1']#, 'l1'] #'elasticnet'] #, 'l1', 'elasticnet']
     
