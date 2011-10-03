@@ -28,8 +28,9 @@ import boto
 import scikits.learn 
 import cloud
 
-import signals     
+
 import simulate
+import signals     
 import encoder     
 import sgd_cascade
 import balanced_ensemble
@@ -273,13 +274,13 @@ def gen_work_list():
     #cut_thresholds = [.0005, .001, .0015,  0.002]
     #transformations = ['triangle', 'thresh']
     transformations = ['triangle'] 
-    n_centroids = [None, 40]  
-    targets = [1, -1]
-    unit_norm = [False, True] 
-    pairwise_products = [False, True] 
-    whiten = [False, True]
-    neutral_weights = [2, 4, 8] 
-    num_classifiers = [32, 128]
+    n_centroids = [None, 15, 30]  
+    #targets = [1, -1]
+    unit_norm = [False] #, True] 
+    pairwise_products = [ False, True] 
+    whiten = [True, False]
+    neutral_weights = [1, 4, 8]
+    num_classifiers = [8, 32, 128]
     cs = [0.1, 1.0, 10.0]
     #losses = ['hinge']# , 'modified_huber']
     #penalties = ['l2']#, 'l1']#, 'l1'] #'elasticnet'] #, 'l1', 'elasticnet']
@@ -297,20 +298,20 @@ def gen_work_list():
                     for u in unit_norm:
                         for n in num_classifiers:
                             for c in cs:
-                                for target in targets:
-                                    for neutral_weight in neutral_weights:
-                                        params = {
-                                            'target': target, 
-                                            'k': k, 
-                                            't': t, 
-                                            'whiten': w, 
-                                            'pairwise_products': prod,
-                                            'unit_norm': u, 
-                                            'num_classifiers': n,
-                                            'C': c, 
-                                            'neutral_weight': neutral_weight,
-                                        }
-                                        worklist.append(params)
+                                #for target in targets:
+                                for neutral_weight in neutral_weights:
+                                    params = {
+                                #        'target': target, 
+                                        'k': k, 
+                                        't': t, 
+                                        'whiten': w, 
+                                        'pairwise_products': prod,
+                                        'unit_norm': u, 
+                                        'num_classifiers': n,
+                                        'C': c, 
+                                        'neutral_weight': neutral_weight,
+                                    }
+                                    worklist.append(params)
 
                         #for loss in losses:
                         #for p in penalties:
@@ -345,12 +346,12 @@ def param_search(train_files, test_files, features=features, debug=False):
         jobids = cloud.map(eval_param, params, _fast_serialization=2, _type='m1', _label=label) 
         results = [] 
         print "Launched", len(params), "jobs, waiting for results..."
-        for params, result, e, model in cloud.iresult(jobids, num_in_parallel=10):
-            if result:
-                print params
-                print model
-                print result 
-                results.append({'params':params, 'result': result, 'encoder': e, 'model': model})
+        for params, result, e, model in cloud.iresult(jobids):
+            results.append({'params':params, 'result': result, 'encoder': e, 'model': model})
+            print params
+            print model
+            print result 
+            
                 
         def cmp(x,y):
             return int(np.sign(x['result']['accuracy'] - y['result']['accuracy']))

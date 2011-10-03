@@ -8,7 +8,8 @@ import scikits.learn.svm as svm
 class Ensemble:
     # weighting = 'uniform' | 'accuracy' 
     # nfeatures = percent | 'sqrt' | 'log'
-    def __init__(self, bag_prct=0.85, num_classifiers = 100, weighting='accuracy', nfeatures='sqrt', neutral_weight=1, **model_keywords):
+    # thresh = percent of votes required for a non-zero class 
+    def __init__(self, bag_prct=0.75, num_classifiers = 100, weighting='f-score', thresh=0.6, recall_importance=0.5, nfeatures='sqrt', neutral_weight=1, **model_keywords):
         self.models = [] 
         self.weighting = weighting
         self.model_weights = None
@@ -20,6 +21,8 @@ class Ensemble:
         self.model_keywords = model_keywords
         #self.prior_probabilities = None 
         self.neutral_weight = neutral_weight
+        self.recall_importance = recall_importance 
+        self.thresh = thresh 
         
     # each bootstrap sample consists of 75% of the rarest class and
     # equal poritions of all other classes 
@@ -50,17 +53,17 @@ class Ensemble:
             features_per_model = int(math.ceil(nfeatures * self.nfeatures))
         print "Features per model:", features_per_model
         
-        class_weight = {}
-        for c in self.classes:
-            class_weight[c] = 1.0
-        class_weight[0] = self.neutral_weight 
+        if class_weight is None: 
+            class_weight = {}
+            for c in self.classes:
+                class_weight[c] = 1.0
+            class_weight[0] = self.neutral_weight 
         print "[Class Weights]", class_weight 
         
-        # average in-class accuracy for each classifer
-        balanced_accuracies = [] 
+        f_scores = [] 
         
         for i in xrange(self.nmodels):
-            
+            print "Training model #" + str(i)
             input_list = []
             output_list = []
             feature_indices = np.random.permutation(nfeatures)[:features_per_model]
@@ -83,24 +86,33 @@ class Ensemble:
             
             # remember the balanced accuracy for each model 
             pred = model.predict(inputs)
-            balanced_accuracy = 0.0
-            print "Trained model #" + str(i)
-            for c in self.classes:
-                class_mask = (outputs == c)
-                ncorrect = np.sum(outputs[class_mask] == pred[class_mask]) 
-                class_accuracy = ncorrect / np.sum(class_mask, dtype='float')
-                print "Accuracy on class", c, "=", class_accuracy
-                balanced_accuracy += class_accuracy 
-            balanced_accuracy /= len(self.classes) 
-            print "Balanced accuracy = ", balanced_accuracy 
-            balanced_accuracies.append(balanced_accuracy)
+            
+            # compure F-score for model weighting and user feedback 
+            actual_not_zero = (outputs != 0)
+            pred_not_zero = (pred != 0)
+            correct = (outputs == pred)
+            correct_not_zero = np.sum(correct & actual_not_zero, dtype='float') 
+            
+            precision = correct_not_zero / np.sum(pred_not_zero, dtype='float')
+            print "  Precision:", precision 
+            
+            recall = correct_not_zero / np.sum(actual_not_zero, dtype='float')
+            print "  Recall:", recall 
+            
+            
+            if precision > 0 or recall > 0:
+                beta_squared = self.recall_importance ** 2
+                denom = beta_squared * precision + recall 
+                f_score = (1+beta_squared)* (precision * recall) / denom
+            else: f_score = 0.0
+            print "  F-score:", f_score
+            f_scores.append(f_score)
+                
 
-        balanced_accuracies = np.array(balanced_accuracies)
-        print "[Model Accuracies]", balanced_accuracies
-        total_accuracy = np.sum(balanced_accuracies)
-        if total_accuracy == 0: raise RuntimeError("all these classifiers are terrible")
-        self.model_weights = balanced_accuracies / total_accuracy
-        
+        f_scores = np.array(f_scores)
+        sum_f_scores = np.sum(f_scores)
+        if sum_f_scores == 0: raise RuntimeError("all these classifiers are terrible")
+        self.model_weights = f_scores / sum_f_scores
         
     def predict(self, X, return_probs=False):
         cs = self.classes 
@@ -118,6 +130,8 @@ class Ensemble:
             votes += curr_votes
         
         majority = cs[np.argmax(votes, 1)]
+        max_vals = np.max(votes, 1)
+        majority[max_vals < self.thresh] = 0
         if return_probs: 
             probs = votes / np.array([np.sum(votes, 1, dtype='float')]).T
             return majority, probs

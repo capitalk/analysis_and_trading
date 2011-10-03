@@ -1,7 +1,6 @@
 import math 
 import numpy as np
 import analysis
-find_future_index = analysis.find_future_index 
 import bisect 
 import scipy 
 
@@ -228,15 +227,15 @@ def min_bid_exceeds_offer_single_timeframe(data, wait_time=1500, hold_time=250, 
     signal = np.zeros(len(ts))
     max_per_millisecond = analysis.density_per_millisecond(hold_time)
     last_time = wait_time+hold_time
-    
+    find_index = analysis.find_future_index 
     for idx in xrange(len(ts)):
         t = ts[idx]
         start_offer = offers[idx]
-        start_hold_idx = find_future_index(ts, idx, t+wait_time, max_per_millisecond=max_per_millisecond)
+        start_hold_idx = find_index(ts, idx, t+wait_time, max_per_millisecond=max_per_millisecond)
         # prefilter 
         if bids[start_hold_idx-1] > start_offer:
             target_price = target_prct * start_offer
-            end_hold_idx = find_future_index(ts, idx, t+last_time, max_per_millisecond=max_per_millisecond)
+            end_hold_idx = find_index(ts, idx, t+last_time, max_per_millisecond=max_per_millisecond)
             future_bids = bids[start_hold_idx:end_hold_idx]
             if len(future_bids) > 0 and np.min(future_bids) > target_price: 
                 signal[idx] = 1
@@ -259,17 +258,18 @@ def bid_exceeds_offer_before_drop(data, max_drop = .00001, min_profit=0.00005, m
     
     signal = np.zeros(len(ts))
     max_per_millisecond = analysis.density_per_millisecond(max_time-network_delay)
+    find_index = analysis.find_future_index
     for idx in xrange(len(ts)):
         t = ts[idx]
         start_bid = bids[idx] 
         
         # average prices over the time window in which a buy message may reach 
         # the server
-        find_future_index(ts, idx, t+network_delay, max_per_millisecond=max_per_millisecond)
+        find_index(ts, idx, t+network_delay, max_per_millisecond=max_per_millisecond)
         delayed_offers = offers[idx:last_delay_index] 
         avg_delayed_offer = np.mean(delayed_offers) 
         
-        last_future_index = find_future_index(ts, idx, max_time, max_per_millisecond=max_per_millisecond)
+        last_future_index = find_index(ts, idx, max_time, max_per_millisecond=max_per_millisecond)
         future_bids = bids[last_delay_index:last_future_index]
         
         sale_price_prct = (future_bids - avg_delayed_offer) / avg_delayed_offer
