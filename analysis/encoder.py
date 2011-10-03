@@ -81,7 +81,7 @@ class FeatureEncoder():
                 X_train_centered = X_train_centered[random_index_subset, :] 
                 
         if whiten: 
-            self.pca = scikits.learn.decomposition.RandomizedPCA(whiten=True, n_components=min(50, nfeatures))
+            self.pca = scikits.learn.decomposition.RandomizedPCA(whiten=True, n_components=min(100, nfeatures))
             self.pca.fit(X_train_centered)
         else:
             self.pca = None 

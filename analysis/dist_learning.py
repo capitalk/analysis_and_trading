@@ -26,6 +26,7 @@ import tempfile
 
 import boto 
 import scikits.learn 
+import scikits.learn.linear_model 
 import cloud
 
 
@@ -47,6 +48,7 @@ def get_hdf_bucket(bucket='capk-fxcm'):
     socket.setdefaulttimeout(None)
     conn = boto.connect_s3(AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
     return conn.get_bucket(bucket)
+
 
 
 def load_s3_file(filename, max_failures=2):     
@@ -102,7 +104,9 @@ def load_files(files, features=features, signal_fn=signals.aggressive_profit):
     print "Flattening datasets into feature matrices..." 
     matrices = [dataset_to_feature_matrix(d, features) for d in datasets] 
     feature_data = np.concatenate(matrices)
+    print "Checking data validity..."
     check_data(feature_data) 
+    print "Generating output signal..."
     signal = np.concatenate([signal_fn(d) for d in datasets] )
     times = np.concatenate([d['t/100ms'] for d in datasets])
     bids = np.concatenate( [d['bid/100ms'] for d in datasets])
@@ -157,8 +161,8 @@ def worker(params, features, train_files, test_files):
     
     print "Encoding training data" 
     train_encoded = e.encode(train_data, transformation = params['t'], in_place=True, unit_norm=params['unit_norm'])
-    print train_encoded[0, :]
-    print train_encoded[500, :] 
+    print "X[0]", train_encoded[0, :]
+    print "X[500]", train_encoded[500, :] 
     del train_data
     
     
@@ -174,16 +178,13 @@ def worker(params, features, train_files, test_files):
     # alpha and class weights 
     ntrain = train_encoded.shape[0] 
     
-    model_params = {}
-    if 'loss' in params: model_params['loss'] = params['loss']
-    if 'C' in params: model_params['C'] = params['C']
-    if 'penalty' in params: model_params['penalty']  = params['penalty']
-    if 'shuffle' in params: model_params['shuffle'] = params['shuffle']
-    if 'neutral_weight' in params: model_params['neutral_weight'] = params['neutral_weight']
-    #def mk_model(alpha):
-    #    return balanced_ensemble.Ensemble(num_classifiers=params['num_classifiers'],  **model_params) #alpha=alpha,
+    model_param_keys = [
+        'loss', 'C', 'penalty', 'shuffle', 'alpha', 'neutral_weight', 
+        'num_classifiers','balanced_bagging', 
+    ]
+    model_params = dict([(k, params[k]) for k in model_param_keys if k in params])
     def mk_model():
-        return balanced_ensemble.Ensemble(num_classifiers=params['num_classifiers'], **model_params)
+        return balanced_ensemble.Ensemble(balanced_bagging=False, **model_params)
     #best_weights = None 
     #best_alpha = None 
     #best_value = -10000 #{'accuracy': -1, 'ppt': -10000}
@@ -232,7 +233,10 @@ def worker(params, features, train_files, test_files):
     #print "Fitting full model, alpha=", best_alpha
     
     model = mk_model()
-    model.fit(train_encoded, train_signal)
+    if 'class_weight' in params:
+        model.fit(train_encoded, train_signal, class_weight=params['class_weight'])
+    else:
+        model.fit(train_encoded, train_signal)
     del train_encoded
     del train_signal 
     
@@ -268,48 +272,51 @@ def worker(params, features, train_files, test_files):
     #model.sample_weight = [] 
     return  params, result, e, model
     
-def gen_work_list(): 
+    
 
+def gen_work_list(): 
 #    n_centroids = [None, 25, 50, 100] 
     #cut_thresholds = [.0005, .001, .0015,  0.002]
     #transformations = ['triangle', 'thresh']
     transformations = ['triangle'] 
     n_centroids = [None, 15, 30]  
-    #targets = [1, -1]
-    unit_norm = [False] #, True] 
+    unit_norm = [False, True] 
     pairwise_products = [ False, True] 
     whiten = [True, False]
-    neutral_weights = [1, 2, 3, 4]
-    num_classifiers = [8, 32, 128]
-    cs = [0.1, 1.0]
+    num_classifiers = [128]
+    #targets = [1, -1]
+    #neutral_weights = [3, 4, 5]
+    #cs = [0.01, 0.001]
     #losses = ['hinge']# , 'modified_huber']
     #penalties = ['l2']#, 'l1']#, 'l1'] #'elasticnet'] #, 'l1', 'elasticnet']
     
-    #alphas = [0.00001] #10.0 ** np.arange(-7, -3)
+    alphas = [0.00001, 0.000001]  #10.0 ** np.arange(-7, -3)
     
     #cascade_length = [3,4,5]
-    #class_weights = [8, 16] #, 32]
+    class_weights = [10, 20] #, 32]
     worklist = [] 
     for prod in pairwise_products: 
         for k in n_centroids:
             ts = transformations if k is not None else [None] 
-            for t in ts: 
-                for w in whiten: 
-                    for u in unit_norm:
-                        for n in num_classifiers:
-                            for c in cs:
+            for class_weight in class_weights:
+                for alpha in alphas: 
+                    for t in ts: 
+                        for w in whiten: 
+                            for u in unit_norm:
+                                for n in num_classifiers:
+                            #for c in cs:
                                 #for target in targets:
-                                for neutral_weight in neutral_weights:
+                                #for neutral_weight in neutral_weights:
                                     params = {
-                                #        'target': target, 
                                         'k': k, 
                                         't': t, 
                                         'whiten': w, 
                                         'pairwise_products': prod,
                                         'unit_norm': u, 
                                         'num_classifiers': n,
-                                        'C': c, 
-                                        'neutral_weight': neutral_weight,
+                                        'alpha': alpha, 
+                                        #'C': c, 
+                                        'class_weight': {-1:class_weight, 0:1, +1:class_weight},
                                     }
                                     worklist.append(params)
 
