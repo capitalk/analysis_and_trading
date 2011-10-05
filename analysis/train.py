@@ -64,7 +64,7 @@ def load_file(filename, ntrain=None, signal=signals.aggressive_profit):
     x_train, x_test, y_train, y_test, split_idx = split_data(x,y, ntrain=ntrain)
     return  d, x_train, x_test, y_train, y_test, split_idx 
 
-import scikits.learn
+import sklearn 
 import simulate
 def eval_lin_classifier(mk_model, d, x_train,x_test, y_train, y_test, test_start_idx, penalty='l2'):
     cs = np.logspace(-2, 1, 4)

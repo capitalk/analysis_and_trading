@@ -7,7 +7,7 @@ class Dataset():
         self.filename = filename 
         hdf = h5py.File(filename, 'r')
         self.hdf = hdf 
-        self.t = hdf['t/100ms'][...]
+        self.t = hdf['t/100ms'][:]
         self.indices = np.arange(len(self.t))
         self.features = list(hdf.attrs['features'])
         self.reducers = list(hdf.attrs['reducers'])
@@ -19,7 +19,7 @@ class Dataset():
             self.currency_pair = hdf.attrs["currency_pair"]
         else:
             currency_names = [
-                "AUD", "CAD", "EUR", "GBP", "NZD", "JPY", "EUR", "CHF" 
+                "AUD", "CAD", "EUR", "GBP", "NZD", "JPY", "EUR", "CHF", "USD", 
             ] 
             self.currency_pair = None 
             for part in filename.split("_"):

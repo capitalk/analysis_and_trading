@@ -35,12 +35,12 @@ def get_usd_rate(currency):
 # usd_transaction_cost = cost per trade 
 def aggressive(ts, bids, offers, signal, currency_pair,  
         trade_size_usd=1000000, 
-        signal_window_time=100, 
+        signal_window_time=1000, 
         min_window_signals=3, 
         min_profit_prct = 0.0008, 
         usd_transaction_cost=13, 
         min_time_between_trades = 2000, 
-        carry_position = True):
+        carry_position = False):
     # how much of the payment currency can we buy with 1 dollar? 
     conversion_rate = get_static_usd_rate(currency_pair[1])
     trade_size = trade_size_usd * conversion_rate 
@@ -153,9 +153,10 @@ def aggressive(ts, bids, offers, signal, currency_pair,
 def aggressive_with_hard_thresholds(ts, bids, offers,  signal, currency_pair,  
         trade_size_usd=1000000, 
         window_time=1000, 
+        max_hold_time = 30000, 
         min_window_signals=3, 
-        max_loss_prct = 0.0005, 
-        min_profit_prct=0.0002, 
+        max_loss_prct = 0.0015, 
+        min_profit_prct=0.0002,  # this is what signal gets trained to 
         slippage = 0.00001, 
         usd_transaction_cost=13):
     
@@ -180,31 +181,27 @@ def aggressive_with_hard_thresholds(ts, bids, offers,  signal, currency_pair,
         curr_bid = bids[i]
         curr_offer = offers[i]
         curr_signal = signal[i]
+        t = ts[i]
         # if have position, check whether need to cut
         # otherwise, if 3 signals in 10ms agree put in an order 
         # enter that position 
         if position > 0:
             slipped_bid = curr_bid * (1  - slippage)
             prct = (slipped_bid - trade_price) / trade_price
-            if prct >= min_profit_prct:
+            if (prct >= min_profit_prct)  or (prct <= -max_loss_prct) or (t >= trade_time + max_hold_time):
                 position = 0 
                 profits[i] = prct * trade_size - transaction_cost 
-            elif prct <= -max_loss_prct:
-                position = 0 
-                profits[i] = prct * trade_size - transaction_cost 
+            
         elif position < 0:
             slipped_offer = curr_offer * (1 + slippage)
             prct = (trade_price - slipped_offer) / trade_price 
-            if prct >= min_profit_prct:
+            if (prct >= min_profit_prct) or (prct <= -max_loss_prct) or (t >= trade_time + max_hold_time):
                 position = 0 
-                profits[i] = prct * trade_size - transaction_cost
-            elif prct <= -max_loss_prct:
-                position = 0
-                profits[i] = prct * trade_size - transaction_cost 
+                profits[i] = prct * trade_size - transaction_cost  
             
         # no current position, should we enter one? 
         elif curr_signal != 0:
-            t = ts[i]
+            
             new_buy_signals = []
             new_sell_signals = [] 
             if curr_signal == BUY: new_buy_signals.append(t)
@@ -240,16 +237,20 @@ def aggressive_with_hard_thresholds(ts, bids, offers,  signal, currency_pair,
             else:
                 old_buy_signals = new_buy_signals
                 old_sell_signals = new_sell_signals 
+                
+    # what if we're still holding a position at the end of the day?
+    if position > 0:
+        slipped_bid = curr_bid * (1  - slippage)
+        prct = (slipped_bid - trade_price) / trade_price
+        profits[n-1] += prct * trade_size - transaction_cost 
+    elif position < 0:
+        slipped_offer = curr_offer * (1 + slippage)
+        prct = (trade_price - slipped_offer) / trade_price 
+        profits[n-1] += prct * trade_size - transaction_cost  
+        
     usd_profits = profits / conversion_rate 
     return usd_profits 
 
-# wrapper for simulate profits so we don't have to explicitly pass bids, offers, times 
-def aggressive_with_hard_thresholds_dataset(dataset, signal, start_index=0):
-    bids = dataset['bid/100ms'][start_index:]
-    offers = dataset['offer/100ms'][start_index:]
-    ts = dataset['t'][start_index:]
-    return simulate_profits(ts, bids, offers, signal, d.currency_pair)
-        
     
 def profit_vs_threshold(dataset, signal): 
     thresholds = np.arange(0.00005, 0.01, 0.00005)

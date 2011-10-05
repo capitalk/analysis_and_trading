@@ -5,6 +5,21 @@ import numpy as np
 import scipy 
 import scipy.stats 
 import scipy.weave 
+
+
+def check_data(x):
+    inf_mask = np.isinf(x)
+    if np.any(inf_mask):
+        raise RuntimeError("Found inf: " + str(np.nonzero(inf_mask)))
+        
+    nan_mask = np.isnan(x)
+    if np.any(nan_mask):
+        raise RuntimeError("Found NaN: " + str(np.nonzero(nan_mask)))
+        
+    same_mask = (np.std(x, 0) <= 0.0000001)
+    if np.any(same_mask):
+        raise RuntimeError("Column all same: " + str(np.nonzero(same_mask)))
+    
     
 def clean(x):
     return x[np.logical_not(np.logical_or(np.isinf(x), np.isnan(x)))]
@@ -111,40 +126,6 @@ def probability_of_mode(ts, xs, win_size =1000):
             result[i] = counts[0] / float(len(window))
     return result 
 
-
-def find_first_gte(x,v):
-    code = """
-        int nx = Nx[0];
-        double vf = PyFloat_AsDouble(v);
-        return_val = -1; 
-        for (int i = 0; i < nx; ++i) { 
-            if (x[i] >= vf) {
-                return_val = i;
-                break;
-            }
-        }
-        """
-    idx = scipy.weave.inline(code, ['x', 'v'], verbose=2)
-    if idx == -1: return None
-    else: return idx 
-
-
-import scipy.weave 
-def find_first_lte(x,v):
-    code = """
-        int nx = Nx[0];
-        double vf = PyFloat_AsDouble(v);
-        return_val = -1; 
-        for (int i = 0; i < nx; ++i) { 
-            if (x[i] <= vf) {
-                return_val = i;
-                break;
-            }
-        }
-        """
-    idx = scipy.weave.inline(code, ['x', 'v'], verbose=2)
-    if idx == -1: return None
-    else: return idx 
 
 
 
