@@ -1,7 +1,7 @@
 import numpy as np 
-import scikits.learn
-import scikits.learn.svm as svm 
-import scikits.learn.linear_model as lin 
+import sklearn 
+import sklearn.svm as svm 
+import sklearn.linear_model as lin 
 
 # rather than relying on the usual one-vs-all highest score wins output, 
 # instead pos/neg have to both beat their opposite signal as well as neutral 

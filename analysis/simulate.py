@@ -155,7 +155,7 @@ def aggressive_with_hard_thresholds(ts, bids, offers,  signal, currency_pair,
         max_hold_time = 30000, 
         min_window_signals=3, 
         max_loss_prct = 0.0015, 
-        min_profit_prct=0.0002, 
+        min_profit_prct=0.0002,  # this is what signal gets trained to 
         slippage = 0.00001, 
         usd_transaction_cost=13):
     

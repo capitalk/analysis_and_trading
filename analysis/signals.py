@@ -4,6 +4,7 @@ import analysis
 import bisect 
 import scipy 
 
+
 def future_window_statistic(ts, ys, fn, window_size = 15000):
     n = len(ts)
     results = np.zeros(n)
@@ -150,8 +151,8 @@ def net_movements(ts, ys, window_size = 15000):
         if len(ys) < 5: 
             return 0.0
         else:
-            top = np.max(ys)#scipy.stats.scoreatpercentile(ys, 75)
-            bottom = np.min(ys) #scipy.stats.scoreatpercentile(ys, 25)
+            top = np.max(ys)
+            bottom = np.min(ys)
             y = ys[0] 
             return (top + bottom)/2 -  y
     return future_window_statistic(ts, ys, fn, window_size)

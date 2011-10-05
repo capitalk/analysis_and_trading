@@ -18,30 +18,105 @@ features = [
     "clean log offer_range/mean/5s safe_div spread/mean/50s", # how many spreads wide is the vertical offer range? 
     't % 86400000' # t is milliseconds since midnight, divide by milliseconds in day to normalize
     ]
-            
+
+# pairwise product features: '33 = 1st & last' '73 = 3rd & 6th' 
 
 import numpy as np     
 import os 
 import tempfile 
 
 import boto 
-import scikits.learn 
-import scikits.learn.linear_model 
+import sklearn 
+import sklearn.linear_model 
 import cloud
 
 
 import simulate
-import signals     
+#import signals     
 import encoder     
 import sgd_cascade
 import balanced_ensemble
 from dataset import Dataset 
 from expr_lang import Evaluator 
-from analysis import check_data 
+#from analysis import check_data 
 
 AWS_ACCESS_KEY_ID = 'AKIAITZSJIMPWRM54I4Q' 
 AWS_SECRET_ACCESS_KEY = '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' 
 
+def aggressive_profit(data, max_hold_frames = 80, num_profitable_frames = 2, target_prct=0.0001, start=None, end=None):
+    ts = data['t/100ms'][start:end]
+    bids = data['bid/100ms'][start:end]
+    offers = data['offer/100ms'][start:end]
+    n = len(ts) 
+    signal = np.zeros(n)
+    for (idx, start_offer) in enumerate(offers):
+        if idx < n - max_hold_frames - 1:
+            bid_window = bids[idx+1:idx+max_hold_frames+1]
+            target_up = (1 + target_prct) * start_offer
+            profit_up =  np.sum(bid_window >= target_up) > num_profitable_frames 
+            
+            start_bid = bids[idx]
+            target_down = (1 - target_prct) * start_bid
+            offer_window = offers[idx+1:idx+max_hold_frames + 1]
+            profit_down = np.sum(offer_window <= target_down) > num_profitable_frames
+            
+            if profit_up and not profit_down:
+                signal[idx] = 1
+            elif profit_down and not profit_up:
+                signal[idx] = -1
+    return signal 
+
+def future_change(ys, horizon = 100):
+    n = len(ys)
+    signal = np.zeros(n)
+    for i in xrange(n-1):
+        future_delta = ys[i+1:i+horizon] - ys[i] 
+        max_val = np.max(future_delta)
+        min_val = np.min(future_delta)
+        if max_val > -min_val: signal[i] = max_val 
+        else: signal[i] = min_val
+    return signal 
+
+def check_data(x):
+    inf_mask = np.isinf(x)
+    if np.any(inf_mask):
+        raise RuntimeError("Found inf: " + str(np.nonzero(inf_mask)))
+        
+    nan_mask = np.isnan(x)
+    if np.any(nan_mask):
+        raise RuntimeError("Found NaN: " + str(np.nonzero(nan_mask)))
+        
+    same_mask = (np.std(x, 0) <= 0.0000001)
+    if np.any(same_mask):
+        raise RuntimeError("Column all same: " + str(np.nonzero(same_mask)))
+
+                                
+def accuracy(y_test, pred): 
+    pred_zero = pred == 0
+    num_zero = np.sum(pred_zero)
+    
+    pred_pos = pred > 0
+    num_pos = np.sum(pred_pos) 
+    
+    pred_neg = pred < 0
+    num_neg = np.sum(pred_neg) 
+    num_nonzero = num_pos + num_neg 
+    
+    y_test_pos = y_test > 0 
+    y_test_neg = y_test < 0
+    y_test_zero = y_test == 0
+    tp = np.sum(y_test_pos & pred_pos)
+    tz = np.sum(y_test_zero & pred_zero)
+    tn = np.sum(y_test_neg & pred_neg)
+    
+    fp = num_pos - tp 
+    fn = num_neg - tn 
+    fz = num_zero - tz 
+    total = float(tp + fp + tn + fn)
+    if total > 0: accuracy = (tp + tn) / total 
+    else: accuracy = 0.0 
+    return accuracy, tp, fp, tn, fn, tz, fz
+        
 def get_hdf_bucket(bucket='capk-fxcm'):
     # just in case
     import socket
@@ -49,10 +124,13 @@ def get_hdf_bucket(bucket='capk-fxcm'):
     conn = boto.connect_s3(AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
     return conn.get_bucket(bucket)
 
-
-
+cache_dir = '/s3_cache'
 def load_s3_file(filename, max_failures=2):     
     print "Loading", filename, "from S3"
+    cache_name = cache_dir + "/" + filename 
+    if os.path.exists(cache_name): 
+        print "Found", filename, "in environment's local cache, returning", cache_name 
+        return cache_name 
     max_failures = 3 
     fail_count = 0 
     got_file = False 
@@ -98,7 +176,7 @@ def dataset_to_feature_matrix(d, features=features):
         result[:, idx] = vec
     return result
 
-def load_files(files, features=features, signal_fn=signals.aggressive_profit): 
+def load_files(files, features=features, signal_fn=aggressive_profit): 
     print "Loading datasets..."
     datasets = load_s3_files(files) 
     print "Flattening datasets into feature matrices..." 
@@ -115,20 +193,20 @@ def load_files(files, features=features, signal_fn=signals.aggressive_profit):
     print "Deleting local files..." 
     for d in datasets:
         d.hdf.close()
-        os.remove(d.filename)
+#        os.remove(d.filename)
     return feature_data, signal, times, bids, offers, currencies   
 
     
 def eval_prediction(ts, bids, offers, pred, actual, currency_pair, cut=0.0015):
 
-    profit_series = simulate.aggressive_with_hard_thresholds(ts, bids, offers, pred, currency_pair, max_loss_prct = cut, max_hold_time=60000)
+    profit_series = simulate.aggressive_with_hard_thresholds(ts, bids, offers, pred, currency_pair, max_loss_prct = cut, max_hold_time=30000)
     #profit_series, _, _ = simulate.aggressive(ts, bids, offers, pred, currency_pair)
     sum_profit = np.sum(profit_series)
     ntrades = np.sum(profit_series != 0)
     if ntrades > 0: profit_per_trade = sum_profit / float(ntrades)
     else: profit_per_trade = 0 
     
-    raw_accuracy, tp, fp, tn, fn, tz, fz = signals.accuracy(actual, pred)
+    raw_accuracy, tp, fp, tn, fn, tz, fz = accuracy(actual, pred)
     result = {
         'profit': sum_profit, 
         'ntrades': ntrades, 
@@ -140,123 +218,140 @@ def eval_prediction(ts, bids, offers, pred, actual, currency_pair, cut=0.0015):
     }
     return result 
 
+
+def confusion(pred, actual):
+    """Given a predicted binary label vector and a ground truth returns a tuple containing the counts for:
+    true positives, false positives, true negatives, false negatives """
+    
+    # implemented using indexing instead of boolean mask operations
+    # since the positive labels are expecetd to be sparse 
+    n = len(pred)
+    pred_nz_mask = (pred != 0)
+    pred_nz_indices = np.nonzero(pred_nz_mask)[0]
+        
+    total_nz = len(pred_nz_indices)
+    tp = sum(pred[pred_nz_indices] == actual[pred_nz_indices])
+    fp = total_nz - tp 
+    actual_nz_mask = (actual != 0)
+    actual_nz_indices = np.nonzero(actual_nz_mask)[0]
+        
+    fn = sum(1 - pred[actual_nz_indices])
+    tn = n - tp - fp - fn 
+    return tp, fp, tn, fn 
+        
+def eval_all_thresholds(times, bids, offers, target_sign, target_probs, actual, ccy):
+    best_score = -100
+    best_precision = 0
+    best_recall = 0
+    
+    best_thresh = 0 
+    best_pred = (target_probs >= 0).astype('int')
+    
+    precisions = []
+    recalls = []
+    f_scores = []
+    
+    thresholds = .2 + np.arange(80) / 100.0
+    
+    print "Evaluating threshold"
+    for t in thresholds:
+        pred = target_sign * (target_probs >= t).astype('int') 
+        
+        # compute confusion matrix with masks instead of 
+        tp, fp, tn, fn = confusion(pred, actual) 
+        total_pos = tp + fp
+        
+        if total_pos > 0: precision = tp / float(total_pos)
+        else: precision = 0
+        
+        recall = tp / float(tp + fn)
+        beta = 0.5
+        
+        if precision > 0 and recall > 0:
+            f_score = (1 + beta**2) * (precision * recall) / ((beta**2) * precision + recall)
+        else:
+            f_score = 0.0 
+        print "Threshold:", t, "precision =", precision, "recall =", recall, "f_score =", f_score 
+        precisions.append(precision)
+        recalls.append(recall)
+        f_scores.append(f_score)
+        
+        if f_score > best_score: 
+            best_score = f_score 
+            best_precision = precision 
+            best_recall = recall 
+            best_thresh = t
+            best_pred = pred
+            
+    detailed_result = eval_prediction(times, bids, offers, best_pred, actual, ccy)
+    return {
+        'best_thresh': best_thresh, 
+        'best_precision': best_precision, 
+        'best_recall': best_recall, 
+        'best_score': best_score, 
+        'ppt': detailed_result['ppt'], 
+        'ntrades': detailed_result['ntrades'], 
+        'all_thresholds': list(thresholds), 
+        'all_precisions': precisions, 
+        'all_recalls': recalls,
+    }
+        
     
 # load each file, extract features, concat them together 
 def worker(params, features, train_files, test_files): 
-    print params 
+    general_params, encoder_params, ensemble_params, model_params, train_params   = params 
+    print "General params:", general_params 
+    print "Encoder params:", encoder_params
+    print "Ensemble params:", ensemble_params
+    print "Model params:", model_params
+    print "Train params:", train_params 
+    
     print "Loading training data..."
     train_data, train_signal, train_times, train_bids, train_offers, currencies = load_files(train_files) 
-    if 'target' in params: train_signal = (train_signal == params['target']).astype('int')
+    ntrain = train_data.shape[0] 
+    if 'target' in general_params: target = general_params['target']
+    else: target = None
+    if target: train_signal = (train_signal == target).astype('int')
+            
     # assume all files from same currency pair 
     ccy = currencies[0]
-    k = params['k']
-    whiten = params['whiten']
-    prod = params['pairwise_products']
-    print "Creating encoder with k=", k, 'whiten=', whiten
-    e = encoder.FeatureEncoder(train_data, whiten=whiten, n_centroids=k, products=prod)
-    print "mean: ", e.mean_
-    print "std: ", e.std_ 
-    print "centroids: ", e.centroids 
-    print "pca :", e.pca 
     
-    print "Encoding training data" 
-    train_encoded = e.encode(train_data, transformation = params['t'], in_place=True, unit_norm=params['unit_norm'])
-    print "X[0]", train_encoded[0, :]
-    print "X[500]", train_encoded[500, :] 
+    e = encoder.FeatureEncoder(**encoder_params)
+    print "Encoding training data..." 
+    train_data = e.fit_transform(train_data)
+    print "train_data[500]", train_data[500, :] 
+    
+    
+    model = balanced_ensemble.Ensemble(model_params=model_params, **ensemble_params)
+    
+    if 'class_weight' in train_params: model.fit(train_data, train_signal, class_weight=train_params['class_weight'])
+    else: model.fit(train_data, train_signal)
+    
     del train_data
-    
-    
-    # sometimes we get a list of weights and sometimes we get just one weight
-    # this code is written to work in either case 
-    #class_weights = [params['class_weight']] if 'class_weight' in params else params['class_weights']
-    
-    #alphas = [params['alpha']] if 'alpha' in params else params['alphas']
-    #loss = params['loss']
-    #penalty = params['penalty']
-    # scramble the training the set order and split it into a half-training set
-    # and a validation set to search for best hyper-parameters like 
-    # alpha and class weights 
-    ntrain = train_encoded.shape[0] 
-    
-    model_param_keys = [
-        'loss', 'C', 'penalty', 'shuffle', 'alpha', 'neutral_weight', 
-        'num_classifiers','balanced_bagging', 
-    ]
-    model_params = dict([(k, params[k]) for k in model_param_keys if k in params])
-    def mk_model():
-        return balanced_ensemble.Ensemble(balanced_bagging=False, **model_params)
-    #best_weights = None 
-    #best_alpha = None 
-    #best_value = -10000 #{'accuracy': -1, 'ppt': -10000}
-    
-    #if len(alphas) == 1:
-    #    best_alpha = alphas[0]
-    #else:
-    #    print "Searching for best hyper-parameters" 
-    #    nsubset = min(ntrain/2, 200000)
-    #    print "Creating validation set (size = ", nsubset, ")"
-        
-    #    p = np.random.permutation(ntrain)
-    #    half_train_indices = p[:nsubset]
-    #    validation_indices = p[nsubset:(2*nsubset)]
-    #    half_train = train_encoded[half_train_indices, :] 
-    #    half_signal = train_signal[half_train_indices]
-        
-    #    validation_set = train_encoded[validation_indices, :]
-    #    validation_signal = train_signal[validation_indices] 
-        
-    #    for alpha in alphas: 
-    #        model = mk_model(alpha)
-    #        #weights = {0:1, -1:neg_weight, 1: pos_weight}
-    #        print "Training SVM with alpha=",alpha #weights = 
-    
-    #        model.fit(half_train, half_signal)
-            # pred = model.predict(validation_set) 
-    #        pred = model.predict(validation_set) #multiclass_output(model, validation_set)
-            # accuracy, tp, fp, etc...
-    #        result = signals.accuracy(validation_signal, pred)
-    #        print result
-                
-    #        curr_value = result[0]
-    #        if best_value < curr_value:
-    #            best_value = curr_value  
-    #            best_alpha = alpha 
-        
-        # clear some space 
-    #    del half_train
-    #    del half_signal
-    #    del validation_indices
-    #    del p 
-    #    del validation_set
-    #    del validation_signal 
-        
-    #print "Fitting full model, alpha=", best_alpha
-    
-    model = mk_model()
-    if 'class_weight' in params:
-        model.fit(train_encoded, train_signal, class_weight=params['class_weight'])
-    else:
-        model.fit(train_encoded, train_signal)
-    del train_encoded
     del train_signal 
+    
+    print "Reminder, here were the params:", params 
     
     print "Loading testing data..."
     test_data, test_signal, test_times, test_bids, test_offers, _ = load_files(test_files)
-    if 'target' in params: test_signal = (test_signal == params['target']).astype('int')
     
     print "Encoding test data" 
-    test_encoded = e.encode(test_data, transformation = params['t'], in_place=True, unit_norm=params['unit_norm'])
-    print test_encoded[0, :]
-    print test_encoded[500, :]
-    del test_data 
+    test_data = e.transform(test_data, in_place=True)
+    
+    print "test_data[500] =", test_data[500, :]
+    
                     
     print "Evaluating full model"
     #pred = svm.predict(test_encoded)
-    pred, probs = model.predict(test_encoded, return_probs=True) 
-    print "Probabilities: ", probs[:100]
+    pred, probs = model.predict(test_data, return_probs=True) 
     
-    print "predictions: ", pred[1:50] 
-    result = eval_prediction(test_times, test_bids, test_offers, pred, test_signal, ccy)
+    
+    if target:
+        test_signal = target * (test_signal == target).astype('int')
+        target_index = model.classes.index(1)
+        target_probs = probs[:,target_index]
+        result = eval_all_thresholds(test_times, test_bids, test_offers, target, target_probs, test_signal, ccy)
+    else: result = eval_prediction(test_times, test_bids, test_offers, pred, test_signal, ccy)
     
     print features
     print '[model]'
@@ -264,64 +359,73 @@ def worker(params, features, train_files, test_files):
     print '[encoder]'
     print e.mean_
     print e.std_
-    print e.centroids
     print '[result]' 
-    print result 
+    print 'threshold:', result['best_thresh']
+    print 'precision:', result['best_precision']
+    print 'recall:', result['best_recall']
+    print 'f-score:', result['best_score']
+    print 'ntrades:', result['ntrades']
+    print 'ppt:', result['ppt']
     # have to clear sample weights since SGDClassifier stupidly keeps them 
     # after training 
     #model.sample_weight = [] 
-    return  params, result, e, model
+    return {'params':params, 'result': result, 'encoder': e, 'model': model}
     
     
-
 def gen_work_list(): 
-#    n_centroids = [None, 25, 50, 100] 
-    #cut_thresholds = [.0005, .001, .0015,  0.002]
-    #transformations = ['triangle', 'thresh']
-    transformations = ['triangle'] 
-    n_centroids = [None, 15, 30]  
-    unit_norm = [False, True] 
-    pairwise_products = [ False, True] 
-    whiten = [True, False]
-    num_classifiers = [128]
-    #targets = [1, -1]
-    #neutral_weights = [3, 4, 5]
-    #cs = [0.01, 0.001]
-    #losses = ['hinge']# , 'modified_huber']
-    #penalties = ['l2']#, 'l1']#, 'l1'] #'elasticnet'] #, 'l1', 'elasticnet']
-    
-    alphas = [0.00001, 0.000001]  #10.0 ** np.arange(-7, -3)
-    
-    #cascade_length = [3,4,5]
-    class_weights = [10, 20] #, 32]
-    worklist = [] 
-    for prod in pairwise_products: 
-        for k in n_centroids:
-            ts = transformations if k is not None else [None] 
-            for class_weight in class_weights:
-                for alpha in alphas: 
-                    for t in ts: 
-                        for w in whiten: 
-                            for u in unit_norm:
-                                for n in num_classifiers:
-                            #for c in cs:
-                                #for target in targets:
-                                #for neutral_weight in neutral_weights:
-                                    params = {
-                                        'k': k, 
-                                        't': t, 
-                                        'whiten': w, 
-                                        'pairwise_products': prod,
-                                        'unit_norm': u, 
-                                        'num_classifiers': n,
-                                        'alpha': alpha, 
-                                        #'C': c, 
-                                        'class_weight': {-1:class_weight, 0:1, +1:class_weight},
-                                    }
-                                    worklist.append(params)
 
-                        #for loss in losses:
-                        #for p in penalties:
+    targets = [-1]
+    oversampling_factors = [0]
+    
+    
+    class_weights = [1] 
+    
+    alphas = [0.000001]
+    
+    num_classifiers = [50] #[100, 200]
+    num_random_features = [0.5, .75]
+    
+    dictionary_types = [None, 'kmeans', 'sparse']
+    dictionary_sizes = [10, 20, 60]
+    pairwise_products = [False, True]
+    pca_types = [None, 'whiten']
+    binning = [False, True]
+    
+    worklist = [] 
+    for target in targets:
+        for smote_factor in oversampling_factors:
+            general_params = {
+                'oversampling_factor': smote_factor, 
+                'target': target
+            }
+            for dict_type in dictionary_types:
+                for dict_size in dictionary_sizes if dict_type is not None else [None]:
+                    for pca_type in pca_types:
+                        for b in binning:
+                            encoder_params = {
+                                'dictionary_type': dict_type, 
+                                'dictionary_size': dict_size, 
+                                'pca_type': pca_type, 
+                                'binning': b
+                            }
+                            for nc in num_classifiers:
+                                for nf in num_random_features:
+                                    ensemble_params = {
+                                        'num_classifiers': nc,
+                                        'num_random_features': nf,
+                                    }
+                                    for alpha in alphas:
+                                        model_params = {
+                                            'alpha': alpha
+                                        }
+                                        for cw in class_weights:    
+                                            train_params = {
+                                                'class_weight': {0:1, 1:cw}
+                                            }
+                                            worklist.append ( (general_params, encoder_params, ensemble_params, model_params, train_params) )
+                            
+                    
+                
     return worklist 
 
 def init_cloud(): 
@@ -329,9 +433,6 @@ def init_cloud():
     cloud.config.force_serialize_logging = False 
     cloud.config.commit()
     cloud.setkey(2579, "f228c0325cf687779264a0b0698b0cfe40148d65")
-
-#def print_params(params):
-#    print "[Input] k:", params['k'], 'whiten:', params['whiten'], 't:', params['t'], 'loss:', params['loss'], 'penalty:', params['penalty'], 'prod:', params['pairwise_products']
 
 def param_search(train_files, test_files, features=features, debug=False):
     print "Features:", features 
@@ -350,31 +451,35 @@ def param_search(train_files, test_files, features=features, debug=False):
     else: 
         init_cloud() 
         label = ", ".join(train_files)
-        jobids = cloud.map(eval_param, params, _fast_serialization=2, _type='m1', _label=label) 
+        jobids = cloud.map(eval_param, params, _fast_serialization=2, _type='m1', _label=label, _env='param_search') 
         results = [] 
         print "Launched", len(params), "jobs, waiting for results..."
-        for params, result, e, model in cloud.iresult(jobids):
-            results.append({'params':params, 'result': result, 'encoder': e, 'model': model})
-            print params
-            print model
-            print result 
-            
+        for x in cloud.iresult(jobids):
+            if x is not None:
+                results.append(x)
+                print x['params']
+                print x['model']
+                print "Result:"
+                r = x['result']
+                print 'precision =', r['best_precision'], 'recall =', r['best_recall'], 'ppt =', r['ppt'], 'ntrades =', r['ntrades']
+                print "---" 
                 
         def cmp(x,y):
-            return int(np.sign(x['result']['accuracy'] - y['result']['accuracy']))
+            return int(np.sign(x['result']['best_score'] - y['result']['best_score']))
         
         results.sort(cmp=cmp)
         
-        accs = [x['result']['accuracy'] for x in results]
-        ppts = [x['result']['ppt'] for x in results]
-        print accs
-        print ppts 
+        #accs = [x['result']['accuracy'] for x in results]
+        #ppts = [x['result']['ppt'] for x in results]
+        #print ppts 
+        #print accs
         
         print "Best:"
-        for item in results[-10:]:
+        for item in results[-5:]:
             print item['params']
-            print item['result']
-        
+            r = item['result']
+            print [(k, r[k]) for k in sorted(r.keys())]
+
 def print_s3_hdf_files(): 
     bucket = get_hdf_bucket()
     filenames = [k.name for k in bucket.get_all_keys() if k.name.endswith('hdf')]
@@ -397,6 +502,9 @@ if __name__ == "__main__":
     parser.add_argument("--test", dest="test", help="testing dates", nargs='*', default=[])
     parser.add_argument("--test_files", dest="test_files", help="testing files", nargs='*', default=[])
     parser.add_argument("--debug", action='store_true', default=False, dest='debug')
+    #todo: make this actually work 
+    parser.add_argument("--output", dest="output", default=None, help="output file for model and encoder")
+    # todo: allow either parameter sweep or manually specify learning params  ie --thresh 0.9 0.95 
     args = parser.parse_args()
     if args.train == [] or args.test == []: print_s3_hdf_files()
     else: 

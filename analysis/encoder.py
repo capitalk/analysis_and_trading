@@ -1,7 +1,11 @@
 import numpy as np
 import scipy 
-import scikits.learn
-from scikits.learn import * 
+#import scikits.learn
+#from scikits.learn import * 
+import sklearn 
+import sklearn.cluster 
+import sklearn.decomposition
+
 from analysis import check_data 
 
 def mean(X):
@@ -13,24 +17,29 @@ def std(X, centered=False):
     else:
         return np.std(X, axis=0)
 
+# computes upper triangle of column products
+# excludes original data and diagonal (original data squared) 
 def pairwise_products(Z):
     m = Z.shape[0] 
     n = Z.shape[1]
-    # pairwise products and original data 
-    
     upper_triangle_count = (n*n - n) / 2 
-    result = np.zeros( [m, upper_triangle_count + 2*n ] )
-
-    result[:, 0:n] = Z
-    col = n
+    result = np.zeros( [m, upper_triangle_count ] ) # + 2*n
+    col = 0
     for i in xrange(n):
         x = Z[:, i] 
-        for j in xrange(0,i+1):
+        for j in xrange(0,i):
             y = Z[:, j]
             result[:, col] = x * y 
             col += 1
     return result
-        
+
+def triangle(dists):
+    """triangle activation function, only "greater than average" distances allowed to be active"""
+    mean_dists = np.mean(dists, axis=1, dtype='float')
+    mean_dists_col = np.array([mean_dists]).T
+    return np.maximum(mean_dists_col - dists , 0)
+    
+
 # modifies X
 def normalize(X, Xmean=None, Xstd=None, in_place = False):
     if in_place: 
@@ -38,62 +47,106 @@ def normalize(X, Xmean=None, Xstd=None, in_place = False):
         X /= Xstd
         return X
     else: return (X - Xmean) / Xstd
-        
+
+def unit_norm_rows(X, in_place=False):
+    norms = np.apply_along_axis(np.linalg.norm, arr=X, axis=1)
+    col = np.array([norms]).T
+    if in_place: X /= col
+    else: X = X / col
+    return X 
+    
+def bin_negatives(X):
+    nrows = X.shape[0]
+    ncols = X.shape[1]
+    result = np.zeros([nrows, 2*ncols])
+    for colidx in xrange(ncols):
+        col = X[:, colidx]
+        is_neg = col < 0
+        result[:, colidx] = col
+        result[is_neg, colidx] = 0
+        result[:, ncols+colidx] = -1*col
+        result[~is_neg, ncols+colidx] = 0
+    return result 
+    
 class FeatureEncoder():
     def __getstate__(self): 
-        return {
-            'mean': self.mean_, 
-            'std': self.std_, 
-            'centroids': self.centroids, 
-            'pca': self.pca
-        }
+        return self.__dict__
+        
     def __setstate__(self, state):
-        self.mean_ = state['mean']
-        self.std_ = state['std']
-        self.centroids = state['centroids']
-        self.pca = state['pca']
+        self.__dict__ = state 
   
-    # if ncentroids = None, then don't cluster inputs
-    def __init__(self, X_train,  n_centroids=None, whiten=False, products=False):
-        self.compute_pairwise_products = products
+    def __init__(self, dictionary_type=None, dictionary_size = 25, pca_type=None, pca_size = 25, compute_pairwise_products=False, binning=False, unit_norm=False):
+        """Options:
+            dictionary_type = None | 'kmeans' | 'sparse' 
+            dictionary_size = None | int 
+            pca_type = None | 'sparse' | 'whiten' 
+            compute_pairwise_products = False | True
+            binning = False | True
+        """
+        self.mean_ = None
+        self.std_ = None 
+
         
-        nrows = X_train.shape[0]
-        nfeatures = X_train.shape[1]
+        self.dictionary_type = dictionary_type
+        self.dictionary_size = dictionary_size 
+        self.dictionary = None 
         
+        self.pca_type = pca_type
+        self.pca_size = pca_size 
+        self.pca = None 
+        
+        self.compute_pairwise_products = compute_pairwise_products
+        self.binning = binning 
+        self.unit_norm = unit_norm 
+    
+    def fit_transform(self, X, in_place=True):
+        nrows = X.shape[0]
         # When normalizing the training data, 
         # save the mean and std vectors so we can normalize 
         # test data using same params.
         # Similarly, save the PCA matrix and centroids so that
         # test data can be whitened and encoded. 
-        self.mean_ = mean(X_train)
-        X_train_centered = X_train - self.mean_
-        self.std_ = std(X_train_centered, centered=True)
-        X_train_centered /= self.std_
-        if products: X_train_centered = pairwise_products(X_train_centered)
-        if whiten or n_centroids is not None: 
-            n_random_indices = min(500000, nrows)
-            print "[encoder] Reducing size from", nrows, "to", n_random_indices 
-            # k-means and PCA are too slow, pull out a subset of the data 
-            if nrows > n_random_indices:
-                indices = np.arange(nrows)
-                np.random.shuffle(indices)
-                random_index_subset = indices[0:n_random_indices]
-                X_train_centered = X_train_centered[random_index_subset, :] 
-                
-        if whiten: 
-            self.pca = scikits.learn.decomposition.RandomizedPCA(whiten=True, n_components=min(100, nfeatures))
-            self.pca.fit(X_train_centered)
-        else:
+        self.mean_ = mean(X)
+        if in_place: X -= self.mean_
+        else: X = X - self.mean_
+        
+        self.std_ = std(X, centered=True)
+        X /= self.std_
+        
+        if self.compute_pairwise_products: X = pairwise_products(X)
+            
+        nfeatures = X.shape[0] 
+        if self.pca_type is None:
             self.pca = None 
-            
-        if n_centroids is None:
-            self.centroids = None 
+        elif self.pca_type == 'whiten': 
+            print "Performing randomized PCA..."
+            self.pca = sklearn.decomposition.RandomizedPCA(whiten=True, n_components=min(self.pca_size, nfeatures))
+            # since we normalize ourselves, avoid redundant work 
+            self.pca.mean_ = None 
+            X = self.pca.fit_transform(X)
+        elif self.pca_type == 'sparse':
+            print "Performing sparse PCA..."
+            self.pca = sklearn.decomposition.MiniBatchSparsePCA(min(self.pca_size, nfeatures))
+            X = self.pca.fit_transform(X)
         else:
-            cluster_inputs = self.pca.transform(X_train_centered) if whiten else X_train_centered 
-            cluster_restarts = 3
-            cluster_iters = 50
-            (self.centroids, label, intertia) = scikits.learn.cluster.k_means(cluster_inputs, n_centroids, max_iter=cluster_iters, n_init=cluster_restarts)
+            raise RuntimeError("Unknown PCA type: " + self.pca_type)    
+        if self.dictionary_type is None:
+            self.dictionary = None
+        elif self.dictionary_type == 'kmeans':
+            print "Running k-means..."
+            self.dictionary = sklearn.cluster.MiniBatchKMeans( self.dictionary_size, init='k-means++')
+            self.dictionary.fit(X)
+            dists = self.dictionary.transform(X)
+            X = triangle(dists)
+        elif self.dictionary_type == 'sparse':
+            self.dictionary = sklearn.decomposition.MiniBatchDictionaryLearning(n_atoms=self.dictionary_size, fit_algorithm='cd', transform_algorithm='threshold', transform_alpha=0.25 )
+            X = self.dictionary.fit_transform(X)
+        else: 
+            raise RuntimeError("Unknown dictionary type: " + self.dictionary_type)
             
+        if self.unit_norm: X = unit_norm_rows(X, in_place=in_place)
+        if self.binning: X = bin_negatives(X)
+        return X
         
     # Two possible final steps:
     # 1) "The Importance of Encoding Versus Training with Sparse Coding and Vector Quantization" 
@@ -102,37 +155,38 @@ class FeatureEncoder():
     # 2) "An Analysis of Single-Layer Networks in Unsupervised Feature Learning"
     #    Triangle activation: max(mean_dist - dist[i], 0)
 
-    def encode(self, X, transformation='triangle', alpha=0.5, validate=True, in_place=False, unit_norm=True):
-        Z = normalize(X, self.mean_, self.std_, in_place=in_place)
-        if self.compute_pairwise_products: 
-            Z = pairwise_products(Z)
-            print "Pairwise products", X.shape, "=>", Z.shape
+    def transform(self, X, validate=False, in_place=True):
+        X = normalize(X, self.mean_, self.std_, in_place=in_place)
         
-        if self.pca: Z = self.pca.transform(Z)
-        if self.centroids is not None:
-            # dist from centroid, with ~50% set to zero 
-            if transformation == 'triangle':
-                dists = scipy.spatial.distance.cdist(Z, self.centroids)
-                if validate: check_data(dists)
-                mean_dists = np.mean(dists, axis=1, dtype='float')
-                mean_dists_col = np.array([mean_dists]).T
-                #only "greater than average" distances allowed to be active
-                Z = np.maximum(mean_dists_col - dists , 0)
-            # probability distribution over centroids 
-            elif transformation == 'prob':
-                dists = scipy.spatial.distance.cdist(Z, self.centroids, 'sqeuclidean')
-                if validate: check_data(dists) 
-                sims = np.exp(-dists)
-                del dists
-                row_sums = np.sum(sims, axis = 1)
+        if self.compute_pairwise_products: 
+            old_shape = X.shape 
+            X = pairwise_products(X)
+            print "Pairwise products", old_shape, "=>", X.shape
+            
+        if self.pca is None: 
+            print "[encoder] No PCA matrix found"
+        else:
+            old_shape = X.shape 
+            X = self.pca.transform(X)
+            print "PCA: ", old_shape, "=>", X.shape 
+            
+        if self.dictionary is None:
+            print "[encoder] No feature dictionary"
+        elif self.dictionary_type == 'kmeans':
+            # triangle dist from centroid, with ~50% set to zero 
+            print "Computing distances..."
+            dists = self.dictionary.transform(X)
+            if validate: check_data(dists)
+            X = triangle(dists)
+            print "Transform by feature dictionary, new shape:", X.shape
+        else:
+            print "Transforming to dictionary feature space..." 
+            X = self.dictionary.transform(X)
+        
+        if self.unit_norm: X = unit_norm_rows(X, in_place=in_place)
 
-                Z = sims / np.array([row_sums]).T
-            # thresholded inner product with centroids 
-            elif transformation == 'thresh':
-                inner_products = np.dot(Z, self.centroids.T)
-                if validate: check_data(inner_products)
-                Z = np.maximum(inner_products - alpha, 0)
-        if unit_norm:
-            norms = np.apply_along_axis(np.linalg.norm, arr=Z, axis=1)
-            Z /= np.array([norms]).T
-        return Z
+        if self.binning:
+            old_shape = X.shape 
+            X = bin_negatives(X)
+            print "Bin negatives, ", old_shape, "=>", X.shape             
+        return X
