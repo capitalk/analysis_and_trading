@@ -319,6 +319,7 @@ def worker(params, features, train_files, test_files):
     e = encoder.FeatureEncoder(**encoder_params)
     print "Encoding training data..." 
     train_data = e.fit_transform(train_data)
+    print "Encoded shape:", train_data.shape 
     print "train_data[500]", train_data[500, :] 
     
     
@@ -360,6 +361,8 @@ def worker(params, features, train_files, test_files):
     print e.mean_
     print e.std_
     print '[result]' 
+    print "precisions:", result['all_precisions']
+    print "recalls:",  result['all_recalls']
     print 'threshold:', result['best_thresh']
     print 'precision:', result['best_precision']
     print 'recall:', result['best_recall']
@@ -381,15 +384,17 @@ def gen_work_list():
     class_weights = [1] 
     
     alphas = [0.000001]
+    Cs = [.01, 0.1, 1.0]
     
-    num_classifiers = [50] #[100, 200]
-    num_random_features = [0.5, .75]
+    base_classifiers = ['sgd']
+    num_classifiers = [100] #[100, 200]
+    num_random_features = [.33, 0.5, .66]
     
     dictionary_types = [None, 'kmeans', 'sparse']
-    dictionary_sizes = [10, 20, 60]
+    dictionary_sizes = [20, 60]
     pairwise_products = [False, True]
     pca_types = [None, 'whiten']
-    binning = [False, True]
+    binning = [False] #, True]
     
     worklist = [] 
     for target in targets:
@@ -410,19 +415,26 @@ def gen_work_list():
                             }
                             for nc in num_classifiers:
                                 for nf in num_random_features:
-                                    ensemble_params = {
-                                        'num_classifiers': nc,
-                                        'num_random_features': nf,
-                                    }
-                                    for alpha in alphas:
-                                        model_params = {
-                                            'alpha': alpha
+                                    for bc in base_classifiers:
+                                        ensemble_params = {
+                                            'num_classifiers': nc,
+                                            'num_random_features': nf,
+                                            'base_classifier': bc, 
                                         }
                                         for cw in class_weights:    
                                             train_params = {
                                                 'class_weight': {0:1, 1:cw}
                                             }
-                                            worklist.append ( (general_params, encoder_params, ensemble_params, model_params, train_params) )
+                                    
+                                            if bc == 'sgd':
+                                                for alpha in alphas:
+                                                    model_params = {'alpha': alpha}
+                                                    worklist.append ( (general_params, encoder_params, ensemble_params, model_params, train_params) )
+                                            else:
+                                                for c in Cs:
+                                                    model_params = { 'C': c}
+                                                    worklist.append ( (general_params, encoder_params, ensemble_params, model_params, train_params) )
+                                                    
                             
                     
                 

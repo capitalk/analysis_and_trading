@@ -135,6 +135,8 @@ class FeatureEncoder():
         elif self.dictionary_type == 'kmeans':
             print "Running k-means..."
             self.dictionary = sklearn.cluster.MiniBatchKMeans( self.dictionary_size, init='k-means++')
+            # bug in sklearn doesn't clear this field
+            self.dictionary.labels_  = None 
             self.dictionary.fit(X)
             dists = self.dictionary.transform(X)
             X = triangle(dists)

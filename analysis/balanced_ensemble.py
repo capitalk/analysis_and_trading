@@ -94,6 +94,8 @@ class Ensemble:
                 n_iter = int(np.ceil(10**6 / float(inputs.shape[0])))
                 print "  Num iters: ", n_iter
                 model = lin.SGDClassifier(n_iter=n_iter, shuffle=True, **self.model_keywords)
+            elif self.base_classifier == 'logistic': 
+                model = lin.LogisticRegression(**self.model_keywords)
             elif self.base_classifier == 'nu-svm':
                 model = svm.NuSVC(nu=0.1, kernel='linear')
             else:
