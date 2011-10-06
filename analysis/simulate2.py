@@ -1,6 +1,8 @@
 import numpy as np
+import scipy.stats as stats
 import logging as log
 import mm_utils
+import random
 import time
 
 #recorded on july 17th, 2011
@@ -58,6 +60,9 @@ def trade_stats(signals, usd_profits, ts):
     print "---------------------------------------------------------"
     #return (signal_count, buys, sells, trade_by_trade)
 
+def fill_binomial(n=1, p=0.8):
+   return stats.binom.ppf(np.random.rand(), n, p) 
+
 # trade_size_usd = size of each trade, converted from USD to 1st currency in pair
 # signal_window_time = how long in the past to look for signals
 # min_window_signals = how many signals must agree in a window before we trade 
@@ -72,29 +77,42 @@ def execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signal, currency_
         min_time_between_trades=1000, 
         carry_position = True,
         max_position = None, 
-        trade_size_scalar=2):
+        trade_size_scalar=2,
+        fill_function=fill_binomial,
+        LOG=False):
 
-    log_filename = "SIMLOG."+currency_pair[0]+currency_pair[1]+".log" 
+    # Setup logging if needed
+    if LOG == True:
+        log_filename = "SIMLOG."+currency_pair[0]+currency_pair[1]+".log" 
 
-    # create logger
-    l = log.getLogger(__name__)
-    l.setLevel(log.DEBUG)
+        # create logger
+        l = log.getLogger(__name__)
+        l.setLevel(log.DEBUG)
+        # create file handler and set level to debug
+        ch = log.FileHandler(log_filename, 'w')
+        ch.setLevel(log.DEBUG)
+        # create formatter
+        formatter = log.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+        # add formatter to ch
+        ch.setFormatter(formatter)
+        # add ch to logger
+        l.addHandler(ch)
+        log_header = "BEGIN RUN %s ====" % time.asctime()
+        l.debug(log_header) 
 
-    # create console handler and set level to debug
-    ch = log.FileHandler(log_filename, 'w')
-    ch.setLevel(log.DEBUG)
-
-    # create formatter
-    formatter = log.Formatter('%(asctime)s [%(levelname)s] %(message)s')
-
-    # add formatter to ch
-    ch.setFormatter(formatter)
-
-    # add ch to logger
-    l.addHandler(ch)
-    
-    log_header = "BEGIN RUN %s ====" % time.asctime()
-    l.debug(log_header) 
+    if LOG == True:
+        l.info("trade_size_usd = %d", trade_size_usd)
+        l.info("signal_window_time = %d", signal_window_time)
+        l.info("min_window_signals = %d", min_window_signals)
+        l.info("min_profit_prct = %d", min_profit_prct)
+        l.info("usd_transaction_cost = %d", usd_transaction_cost)
+        l.info("min_time_between_trades = %d", min_time_between_trades)
+        l.info("carry_position = %d", carry_position)
+        if max_position is None:
+            l.info("max_position = +/- inf")
+        else:
+            l.info("max_position = %d", max_position)
+        l.info("trade_size_scalar = %d", trade_size_scalar)
 
     # how much of the payment currency can we buy with 1 dollar? 
     conversion_rate = get_cross_rate(currency_pair[1])
@@ -102,18 +120,6 @@ def execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signal, currency_
     transaction_cost = usd_transaction_cost * conversion_rate 
     VOLUME_SCALAR = 1000000.
 
-    l.info("trade_size_usd = %d", trade_size_usd)
-    l.info("signal_window_time = %d", signal_window_time)
-    l.info("min_window_signals = %d", min_window_signals)
-    l.info("min_profit_prct = %d", min_profit_prct)
-    l.info("usd_transaction_cost = %d", usd_transaction_cost)
-    l.info("min_time_between_trades = %d", min_time_between_trades)
-    l.info("carry_position = %d", carry_position)
-    if max_position is None:
-        l.info("max_position = +/- inf")
-    else:
-        l.info("max_position = %d", max_position)
-    l.info("trade_size_scalar = %d", trade_size_scalar)
     
     BUY = +1
     SELL = -1 
@@ -142,7 +148,7 @@ def execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signal, currency_
     windowed_sell_count = 0
     m2m_pnl = np.zeros(n)
     level_slippage = 0.00005 # prices get worse by 1/2 pip per level
-    cut_price_delta_long = -0.0005
+    cut_price_delta_long = -0.0005 # allow this much absolute price variance from position price before cutting
     cut_price_delta_short = -0.0005
     
     #action_indices = np.nonzero(signal)[0] 
@@ -168,13 +174,13 @@ def execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signal, currency_
             # then bid - 1*level_slippage at level 2; bid - 2*level_slippage at level 2 etc...
             worst_price_depth = int(position / (curr_bid_vol * VOLUME_SCALAR))
             worst_price_adjust = (worst_price_depth * level_slippage)
-            l.debug("LONG: position_price(%f) curr_mkt(%f@%f) worst_price_adjust(%f) position(%f) worst_price_depth(%f) curr_bid_vol(%f)", position_price, curr_bid, curr_offer, worst_price_adjust, position, worst_price_depth, curr_bid_vol)
+            if LOG: l.debug("LONG: position_price(%f) curr_mkt(%f@%f) worst_price_adjust(%f) position(%f) worst_price_depth(%f) curr_bid_vol(%f)", position_price, curr_bid, curr_offer, worst_price_adjust, position, worst_price_depth, curr_bid_vol)
             m2m_pnl[i] = (curr_bid - worst_price_adjust - position_price) * abs(position)
-            l.debug("LONG M2M pnl: %f", m2m_pnl[i])
+            if LOG: l.debug("LONG M2M pnl: %f", m2m_pnl[i])
 
-            l.debug("Checking for curr_bid - position_price: %f < cut_price_delta_long: %f", curr_bid - position_price, cut_price_delta_long)
+            if LOG: l.debug("Checking for curr_bid - position_price: %f < cut_price_delta_long: %f", curr_bid - position_price, cut_price_delta_long)
             if (curr_bid - position_price - worst_price_adjust) < cut_price_delta_long:
-                l.debug("Cut long pos")
+                if LOG: l.debug("Cut long pos")
                 position = 0
                 position_running[i] = 0 
                 position_deltas[i] = position
@@ -183,18 +189,18 @@ def execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signal, currency_
                 ignored_signals[i] = CUT
                 continue
             else:
-                l.debug("NOT CUTTING")
+                if LOG: l.debug("NOT CUTTING")
 
         elif position < 0:
             worst_price_depth = int(position / (curr_offer_vol * VOLUME_SCALAR))
             worst_price_adjust = (worst_price_depth * level_slippage)
-            l.debug("SHORT: position_price(%f) curr_mkt(%f@%f) worst_price_adjust(%f) position(%f) worst_price_depth(%f) curr_bid_vol(%f)", position_price, curr_bid, curr_offer, worst_price_adjust, position, worst_price_depth, curr_bid_vol)
+            if LOG: l.debug("SHORT: position_price(%f) curr_mkt(%f@%f) worst_price_adjust(%f) position(%f) worst_price_depth(%f) curr_bid_vol(%f)", position_price, curr_bid, curr_offer, worst_price_adjust, position, worst_price_depth, curr_bid_vol)
             m2m_pnl[i] = (position_price - curr_offer - worst_price_adjust) * abs(position)
-            l.debug("SHORT M2M pnl: %f", m2m_pnl[i])
+            if LOG: l.debug("SHORT M2M pnl: %f", m2m_pnl[i])
 
-            l.debug("Checking for position_price - curr_offer: %f < cut_price_delta_short: %f", position_price - curr_offer, cut_price_delta_short)
+            if LOG: l.debug("Checking for position_price - curr_offer: %f < cut_price_delta_short: %f", position_price - curr_offer, cut_price_delta_short)
             if (position_price - curr_offer - worst_price_adjust) < cut_price_delta_short:
-                l.debug("Cut short pos")
+                if LOG: l.debug("Cut short pos")
                 position = 0
                 position_running[i] = 0
                 position_deltas[i] = position
@@ -203,15 +209,15 @@ def execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signal, currency_
                 ignored_signals[i] = -CUT
                 continue
             else:
-                l.debug("NOT CUTTING")
+                if LOG: l.debug("NOT CUTTING")
 
         # P(fill) should depend on time between trades
         #if t - last_trade_time  > min_time_between_trades:
-        l.debug("Current signal: %s", curr_signal)
+        if LOG: l.debug("Current signal: %s", curr_signal)
         if curr_signal != 0:
 
             trade_size = trade_size_usd * conversion_rate 
-            l.debug("Reset trade size to: %d trade_size_usd(%d) conversion_rate(%f)", trade_size, trade_size_usd, conversion_rate)
+            if LOG: l.debug("Reset trade size to: %d trade_size_usd(%d) conversion_rate(%f)", trade_size, trade_size_usd, conversion_rate)
 
             if curr_signal == BUY: buy_signals_window.append(t)
             elif curr_signal == SELL: sell_signals_window.append(t) 
@@ -228,8 +234,8 @@ def execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signal, currency_
             nsells = len(sell_signals_window)
             windowed_sell_count += nsells
 
-            l.debug("buy signals count: %i ", nbuys)
-            l.debug("sell signals count: %i  ", nsells)
+            if LOG: l.debug("buy signals count: %i ", nbuys)
+            if LOG: l.debug("sell signals count: %i  ", nsells)
 
             # debug
             #if num_buy_signals > 0: print "buy_signals_window: ", buy_signals_window, '[', num_buy_signals, ']' 
@@ -240,24 +246,28 @@ def execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signal, currency_
             # TODO pass a risk function to determine cutoff risk = f(position, m2mpnl, last_trade_time, max_hold_time)
             # buying 
             if nbuys > min_window_signals and nsells == 0: #and num_buy_signals > num_sell_signals:
-                l.debug("nbuys > min_window_signals and nsells == 0")
+                if LOG: l.debug("nbuys > min_window_signals and nsells == 0")
                 # size the trade correctly
                 if curr_offer_vol < (trade_size/VOLUME_SCALAR)*trade_size_scalar:
                     trade_size = int(round(curr_offer_vol * VOLUME_SCALAR * (1./trade_size_scalar), -3))
                     trade_size = trade_size * conversion_rate 
-                    l.debug("Setting long trade size to: %d", trade_size)
+                    if LOG: l.debug("Setting long trade size to: %d", trade_size)
 
                 if position >= 0: 
                     if max_position is None or (position + trade_size) < max_position:
-                        position_price = (position * position_price + curr_offer * trade_size) / (trade_size + position)
-                        position += trade_size
-                        position_running[i] = position 
-                        position_deltas[i] = trade_size
-                        last_trade_time = t
-                        profits[i] = -transaction_cost
-                        l.debug("Long position after trade (%f) @ %f", position, position_price)
+                        if fill_function is None or fill_function():
+                            if LOG: l.debug("TRADE: BUY %d @ %f", trade_size, curr_offer)
+                            position_price = (position * position_price + curr_offer * trade_size) / (trade_size + position)
+                            position += trade_size
+                            position_running[i] = position 
+                            position_deltas[i] = trade_size
+                            last_trade_time = t
+                            profits[i] = -transaction_cost
+                            if LOG: l.debug("Long position after trade (%f) @ %f", position, position_price)
+                        else:
+                            if LOG: l.debug("Missed adding to long pos with buy - no trade")
                     else:
-                        l.debug("LIMIT LONG - cur pos: %f", position)
+                        if LOG: l.debug("LIMIT LONG - cur pos: %f", position)
                         ignored_signals[i] = POS_LIMIT
                 elif position < 0:
                     # Always allow closing a position so no check for max_position
@@ -265,17 +275,21 @@ def execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signal, currency_
     
                     # Cover short ONLY at profit
                     if min_profit_prct is None or profit_prct >= min_profit_prct:
-                        abs_pos = abs(position)
-                        position_price = (abs_pos * position_price + curr_offer * trade_size) / (trade_size + abs_pos) 
-                        position += trade_size
-                        position_running[i] = position 
-                        position_deltas[i] = trade_size
-                        last_trade_time = t
-                        curr_profit = profit_prct * trade_size
-                        profits[i] = curr_profit - transaction_cost
-                        l.debug("Taking profit cover short pos %f @ %f", position, position_price)
+                        if fill_function is None or fill_function():
+                            if LOG: l.debug("TRADE: BUY %d @ %f", trade_size, curr_offer)
+                            abs_pos = abs(position)
+                            position_price = (abs_pos * position_price + curr_offer * trade_size) / (trade_size + abs_pos) 
+                            position += trade_size
+                            position_running[i] = position 
+                            position_deltas[i] = trade_size
+                            last_trade_time = t
+                            curr_profit = profit_prct * trade_size
+                            profits[i] = curr_profit - transaction_cost
+                            if LOG: l.debug("Taking profit cover short pos %f @ %f", position, position_price)
+                        else:
+                            if LOG: l.debug("Missed covering short pos - no trade")
                     else:
-                        l.debug("Insufficient profit to cover short pos %f @ %f", position, position_price)
+                        if LOG: l.debug("Insufficient profit to cover short pos %f @ %f", position, position_price)
                         ignored_signals[i] = MIN_PNL
             # selling
             elif nsells > min_window_signals and nbuys == 0: #and num_sell_signals > num_buy_signals:
@@ -283,22 +297,26 @@ def execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signal, currency_
                 if curr_bid_vol < (trade_size/VOLUME_SCALAR)*trade_size_scalar:
                     trade_size = int(round(curr_bid_vol * VOLUME_SCALAR * (1./trade_size_scalar), -3))
                     trade_size = trade_size * conversion_rate 
-                    l.debug("Setting short trade size to: %f (current bid vol: %f)", trade_size, curr_bid_vol)
+                    if LOG: l.debug("Setting short trade size to: %f (current bid vol: %f)", trade_size, curr_bid_vol)
                  
 
 
                 if position <= 0:
                     if max_position is None or (position - trade_size) > -max_position:
-                        abs_pos = abs(position)
-                        position_price = (abs_pos * position_price + curr_bid * trade_size) / (trade_size + abs_pos)    
-                        position_deltas[i] = -trade_size
-                        position -= trade_size
-                        position_running[i] = position 
-                        last_trade_time = t
-                        profits[i] = -transaction_cost
-                        l.debug("Short position after trade (%f) @ %f", position, position_price)
+                        if fill_function is None or fill_function():
+                            if LOG: l.debug("TRADE: SELL %d @ %f", trade_size, curr_bid)
+                            abs_pos = abs(position)
+                            position_price = (abs_pos * position_price + curr_bid * trade_size) / (trade_size + abs_pos)    
+                            position_deltas[i] = -trade_size
+                            position -= trade_size
+                            position_running[i] = position 
+                            last_trade_time = t
+                            profits[i] = -transaction_cost
+                            if LOG: l.debug("Short position after trade (%f) @ %f", position, position_price)
+                        else:
+                            if LOG: l.debug("Missed selling short - no trade")
                     else:
-                        l.debug("LIMIT SHORT - cur pos: %f", position)
+                        if LOG: l.debug("LIMIT SHORT - cur pos: %f", position)
                         ignored_signals[i] = -POS_LIMIT
                 elif position > 0:
                     # Always allow closing long position so no check for max_position
@@ -306,16 +324,19 @@ def execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signal, currency_
 
                     # Sell long position ONLY at profit
                     if min_profit_prct is None or profit_prct >= min_profit_prct:
-                        position_price = (position * position_price + curr_offer * trade_size) / (trade_size + position)
-                        position_deltas[i] = -trade_size
-                        position -= trade_size
-                        position_running[i] = position 
-                        last_trade_time = t
-                        curr_profit = profit_prct * trade_size
-                        profits[i] = curr_profit - transaction_cost
-                        l.debug("Taking profit selling long pos %d @ %f", position, position_price)
+                        if fill_function is None or fill_function():
+                            position_price = (position * position_price + curr_offer * trade_size) / (trade_size + position)
+                            position_deltas[i] = -trade_size
+                            position -= trade_size
+                            position_running[i] = position 
+                            last_trade_time = t
+                            curr_profit = profit_prct * trade_size
+                            profits[i] = curr_profit - transaction_cost
+                            if LOG: l.debug("Taking profit selling long pos %d @ %f", position, position_price)
+                        else:
+                            if LOG: l.debug("Missed selling long pos - no trade")
                     else:
-                        l.debug("Insufficient profit to sell long pos %d @ %f ", position, position_price)
+                        if LOG: l.debug("Insufficient profit to sell long pos %d @ %f ", position, position_price)
                         ignored_signals[i] = -MIN_PNL 
         else:
             if curr_signal == BUY:
