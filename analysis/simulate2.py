@@ -4,6 +4,7 @@ import logging as log
 import mm_utils
 import random
 import time
+import dataset
 
 #recorded on july 17th, 2011
 old_usd_rates = {
@@ -16,6 +17,34 @@ old_usd_rates = {
     'nzd': 0.78,
     'jpy': 79.06
 }
+
+def reg(d1, d2):
+    pass
+
+def load_dataset(hdf_file):
+    d = dataset.Dataset(hdf_file)
+    ts = d['t']
+    bids = d['bid']
+    offers = d['offer']
+    bid_vols = d['bid_vol']
+    offer_vols = d['offer_vol']
+    currency_pair = d.currency_pair
+    (h,m,s,ms) = mm_utils.millis_to_hmsms(ts[-1]-ts[0])
+    duration_str = "%d hours, %d minutes, %d seconds, %d ms" % (h, m, s, ms)
+    print "Evaluatiing: ", "[", ts[0], "-", ts[-1], "]", duration_str 
+    return (d, currency_pair, ts, bids, offers, bid_vols, offer_vols)
+
+
+MILLIS_DAY = 24*60*60*1000;
+def millis_to_hmsms(millis):
+    seconds = millis/1000
+    h = seconds / 3600 
+    m = (seconds - (h*3600))/60
+    ss = (seconds - ((h*3600)+(m*60)))
+    ms = millis - ((ss*1000)+(m*60*1000)+(h*3600*1000))
+    if h > 24 or m > 60 or ss > 60 or ms > 1000: 
+        raise RuntimeError("Invalid time: " , h , ':' , m , ':' , ss , '.' , ms)
+    return (h, m, ss, ms)
 
 def get_cross_rate(currency):
     currency = currency.lower()
@@ -35,7 +64,7 @@ def trade_stats(signals, usd_profits, ts):
     trade_by_trade = [usd_profits[x] for x in non_zero_signals]
      
     print "---------------------------------------------------------"
-    (h,m,s,ms) = mm_utils.millis_to_hmsms(ts[-1])
+    (h,m,s,ms) = mm_utils.millis_to_hmsms(ts[-1]-ts[0])
     duration_str = "%d hours, %d minutes, %d seconds, %d ms" % (h, m, s, ms)
     print "Evaluatiing: ", "[", ts[0], "-", ts[-1], "]", duration_str 
     print "Signal count: ", signal_count
@@ -79,6 +108,8 @@ def execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signal, currency_
         max_position = None, 
         trade_size_scalar=2,
         fill_function=fill_binomial,
+        cut_long = -0.0005,
+        cut_short = -0.0005,
         LOG=False):
 
     # Setup logging if needed
@@ -124,6 +155,7 @@ def execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signal, currency_
     BUY = +1
     SELL = -1 
 
+    # constants for denoting actions at each t
     POS_LIMIT = +2
     MIN_TIME = +3
     MIN_PNL = +4
@@ -148,8 +180,8 @@ def execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signal, currency_
     windowed_sell_count = 0
     m2m_pnl = np.zeros(n)
     level_slippage = 0.00005 # prices get worse by 1/2 pip per level
-    cut_price_delta_long = -0.0005 # allow this much absolute price variance from position price before cutting
-    cut_price_delta_short = -0.0005
+    cut_price_delta_long = cut_long # allow this much absolute price variance from position price before cutting
+    cut_price_delta_short = cut_short
     
     #action_indices = np.nonzero(signal)[0] 
     #for i in action_indices:
