@@ -378,7 +378,14 @@ def cartesian_product(options):
     import itertools
     combinations = [x for x in apply(itertools.product, options.values())]
     return [dict(zip(options.keys(), p)) for p in combinations]
-    
+
+def prune(dicts, condition):
+    result = []
+    for d in dicts:
+        if not condition(d):
+            result.append(d)
+    return result 
+        
     
 def gen_work_list(): 
 
@@ -388,19 +395,21 @@ def gen_work_list():
     
     class_weights = [1] 
     
-    alphas = [0.000001, 0.00001, 0.0001]
+    alphas = [0.00001]
     Cs = [.01, 0.1, 1.0]
     
 
-    all_encoder_params = {
+    possible_encoder_params = {
         'dictionary_type': [None, 'kmeans', 'sparse'],
         'dictionary_size': [10, 20, 60],
         'pca_type': [None, 'whiten'], 
         'compute_pairwise_products': [False], 
         'binning': [False, True]
     }
+    all_encoder_params = cartesian_product(possible_encoder_params)
+    all_encoder_params = prune(all_encoder_params, lambda d: d['dictionary_type'] is None and d['dictionary_size'] != 10)
     
-    all_ensemble_params = {
+    possible_ensemble_params = {
         'balanced_bagging': [True], 
         'num_classifiers': [20], #[100, 200]
         'num_random_features': [0.5],
@@ -408,6 +417,8 @@ def gen_work_list():
         'neutral_weight': [5], 
         'model_weighting': ['logistic'],
     }
+    all_ensemble_params =  cartesian_product(possible_ensemble_params)
+    
     
     worklist = [] 
     for target in targets:
@@ -416,8 +427,8 @@ def gen_work_list():
                 'oversampling_factor': smote_factor, 
                 'target': target
             }
-            for encoder_params in cartesian_product(all_encoder_params):
-                for ensemble_params in cartesian_product(all_ensemble_params): 
+            for encoder_params in all_encoder_params:
+                for ensemble_params in all_ensemble_params:
                     for cw in class_weights:    
                         train_params = { 'class_weight': {0:1, 1:cw} }
                         if ensemble_params['base_classifier'] == 'sgd':

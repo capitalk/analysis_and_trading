@@ -159,60 +159,66 @@ class Ensemble:
                 f_scores.append(f_score)
                 self.models.append(model)
 
-            
-        f_scores = np.array(f_scores)
-        sum_f_scores = np.sum(f_scores)
-        if sum_f_scores == 0: 
-            print "!!!! All classifiers are terrible  !!!!"
-            self.model_scores = f_scores
+        
+        if len(f_scores) == 0:    
+            print "!!! No good classifiers kept !!!" 
         else:
-            self.model_scores = f_scores / sum_f_scores
-            # estimate how good each feature is 
-            counts = np.zeros(nfeatures)
-            feature_scores = np.zeros(nfeatures)
+            f_scores = np.array(f_scores)
+            sum_f_scores = np.sum(f_scores)
+            if sum_f_scores == 0: 
+                print "!!! All classifiers are terrible  !!!"
+                self.model_scores = f_scores
+            else:
+                self.model_scores = f_scores / sum_f_scores
+                # estimate how good each feature is 
+                counts = np.zeros(nfeatures)
+                feature_scores = np.zeros(nfeatures)
+                
+                for f, indices in zip(f_scores, self.model_features):
+                    counts[indices] += 1
+                    feature_scores[indices] += f
+                feature_scores /= counts 
+                print "Average feature scores:", feature_scores 
+                #sorted in ascending order
+                sort_indices = np.argsort(feature_scores)
+                print "Best 5 features:", sort_indices[-5:]
             
-            for f, indices in zip(f_scores, self.model_features):
-                counts[indices] += 1
-                feature_scores[indices] += f
-            feature_scores /= counts 
-            print "Average feature scores:", feature_scores 
-            #sorted in ascending order
-            sort_indices = np.argsort(feature_scores)
-            print "Best 5 features:", sort_indices[-5:]
-            
-        if self.model_weighting == 'logistic':
-            X2 = self.transform_to_classifer_space(X)
-            print "Training logistic regression on top of ensemble outputs..."
-            self.gating_classifier = lin.LogisticRegression()
-            self.gating_classifier.fit(X2, Y)
-        else:
-            self.gating_classifier = None 
+            if self.model_weighting == 'logistic':
+                X2 = self.transform_to_classifer_space(X)
+                print "Training logistic regression on top of ensemble outputs..."
+                self.gating_classifier = lin.LogisticRegression()
+                self.gating_classifier.fit(X2, Y, class_weight='auto')
+            else:
+                self.gating_classifier = None 
             
 
     def predict(self, X, return_probs=False):
         cs = np.array(self.classes)
         nclasses = len(cs)
         nrows = X.shape[0]
-        
-        # if we have a classifier on top of the ensemble use it
-        if self.gating_classifier is not None:
-            X2 = self.transform_to_classifer_space(X)
-            probs = self.gating_classifier.predict_proba(X2)
-        # otherwise weight each model by f_score 
+        if len(self.models) == 0:
+            majority = np.zeros(nrows, dtype='int')
+            probs = np.zeros(nrows, nclasses, dtype='float')
         else:
-            votes = np.zeros( [nrows, nclasses], dtype='float')
-            for i, model in enumerate(self.models):
-                weight = self.model_scores[i]
-                feature_indices = self.model_features[i]
-                y = model.predict(X[:, feature_indices])
-                curr_votes = weight * np.array([y == c for c in cs]).T    
-                votes += curr_votes
-                probs = votes / np.array([np.sum(votes, 1, dtype='float')]).T
-        majority = cs[np.argmax(probs, 1)]
-        
-        # set any probabilities below threshold to neutral class 
-        max_probs = np.max(probs, 1)
-        majority[max_probs < self.thresh] = 0
+            # if we have a classifier on top of the ensemble use it
+            if self.gating_classifier is not None:
+                X2 = self.transform_to_classifer_space(X)
+                probs = self.gating_classifier.predict_proba(X2)
+            # otherwise weight each model by f_score 
+            else:
+                votes = np.zeros( [nrows, nclasses], dtype='float')
+                for i, model in enumerate(self.models):
+                    weight = self.model_scores[i]
+                    feature_indices = self.model_features[i]
+                    y = model.predict(X[:, feature_indices])
+                    curr_votes = weight * np.array([y == c for c in cs]).T    
+                    votes += curr_votes
+                    probs = votes / np.array([np.sum(votes, 1, dtype='float')]).T
+            majority = cs[np.argmax(probs, 1)]
+            
+            # set any probabilities below threshold to neutral class 
+            max_probs = np.max(probs, 1)
+            majority[max_probs < self.thresh] = 0
         if return_probs: 
             return majority, probs
         else: 
