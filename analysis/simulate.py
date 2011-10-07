@@ -1,5 +1,6 @@
 import urllib2
 import numpy as np
+import logging as log
 
 #recorded on july 17th, 2011
 old_usd_rates = {
