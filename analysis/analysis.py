@@ -5,6 +5,7 @@ import numpy as np
 import scipy 
 import scipy.stats 
 import scipy.weave 
+from param_search import * 
 
 
 def check_data(x):

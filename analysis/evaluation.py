@@ -361,8 +361,6 @@ def worker(params, features, train_files, test_files):
     print e.mean_
     print e.std_
     print '[result]' 
-    print "precisions:", result['all_precisions']
-    print "recalls:",  result['all_recalls']
     print 'threshold:', result['best_thresh']
     print 'precision:', result['best_precision']
     print 'recall:', result['best_recall']
@@ -374,11 +372,6 @@ def worker(params, features, train_files, test_files):
     #model.sample_weight = [] 
     return {'params':params, 'result': result, 'encoder': e, 'model': model}
     
-def cartesian_product(options):
-    import itertools
-    combinations = [x for x in apply(itertools.product, options.values())]
-    return [dict(zip(options.keys(), p)) for p in combinations]
-    
     
 def gen_work_list(): 
 
@@ -388,26 +381,18 @@ def gen_work_list():
     
     class_weights = [1] 
     
-    alphas = [0.000001, 0.00001, 0.0001]
+    alphas = [0.000001]
     Cs = [.01, 0.1, 1.0]
     
-
-    all_encoder_params = {
-        'dictionary_type': [None, 'kmeans', 'sparse'],
-        'dictionary_size': [10, 20, 60],
-        'pca_type': [None, 'whiten'], 
-        'compute_pairwise_products': [False], 
-        'binning': [False, True]
-    }
+    base_classifiers = ['sgd']
+    num_classifiers = [100] #[100, 200]
+    num_random_features = [.33, 0.5, .66]
     
-    all_ensemble_params = {
-        'balanced_bagging': [True], 
-        'num_classifiers': [20], #[100, 200]
-        'num_random_features': [0.5],
-        'base_classifier': ['sgd'], 
-        'neutral_weight': [5], 
-        'model_weighting': ['logistic'],
-    }
+    dictionary_types = [None, 'kmeans', 'sparse']
+    dictionary_sizes = [20, 60]
+    pairwise_products = [False, True]
+    pca_types = [None, 'whiten']
+    binning = [False] #, True]
     
     worklist = [] 
     for target in targets:
@@ -416,17 +401,41 @@ def gen_work_list():
                 'oversampling_factor': smote_factor, 
                 'target': target
             }
-            for encoder_params in cartesian_product(all_encoder_params):
-                for ensemble_params in cartesian_product(all_ensemble_params): 
-                    for cw in class_weights:    
-                        train_params = { 'class_weight': {0:1, 1:cw} }
-                        if ensemble_params['base_classifier'] == 'sgd':
-                            all_model_params = [{'alpha': alpha} for alpha in alphas]
-                        else: 
-                            all_model_params = [{ 'C': c} for c in Cs]
-                    for model_params in all_model_params:
-                        param_tuple =  (general_params, encoder_params, ensemble_params, model_params, train_params)
-                        worklist.append (param_tuple)
+            for dict_type in dictionary_types:
+                for dict_size in dictionary_sizes if dict_type is not None else [None]:
+                    for pca_type in pca_types:
+                        for b in binning:
+                            encoder_params = {
+                                'dictionary_type': dict_type, 
+                                'dictionary_size': dict_size, 
+                                'pca_type': pca_type, 
+                                'binning': b
+                            }
+                            for nc in num_classifiers:
+                                for nf in num_random_features:
+                                    for bc in base_classifiers:
+                                        ensemble_params = {
+                                            'num_classifiers': nc,
+                                            'num_random_features': nf,
+                                            'base_classifier': bc, 
+                                        }
+                                        for cw in class_weights:    
+                                            train_params = {
+                                                'class_weight': {0:1, 1:cw}
+                                            }
+                                    
+                                            if bc == 'sgd':
+                                                for alpha in alphas:
+                                                    model_params = {'alpha': alpha}
+                                                    worklist.append ( (general_params, encoder_params, ensemble_params, model_params, train_params) )
+                                            else:
+                                                for c in Cs:
+                                                    model_params = { 'C': c}
+                                                    worklist.append ( (general_params, encoder_params, ensemble_params, model_params, train_params) )
+                                                    
+                            
+                    
+                
     return worklist 
 
 def init_cloud(): 
@@ -460,8 +469,9 @@ def param_search(train_files, test_files, features=features, debug=False):
                 results.append(x)
                 print x['params']
                 print x['model']
+                print "Result:"
                 r = x['result']
-                print 'Result:  precision =', r['best_precision'], 'recall =', r['best_recall'], 'ppt =', r['ppt'], 'ntrades =', r['ntrades']
+                print 'precision =', r['best_precision'], 'recall =', r['best_recall'], 'ppt =', r['ppt'], 'ntrades =', r['ntrades']
                 print "---" 
                 
         def cmp(x,y):
