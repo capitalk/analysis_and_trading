@@ -1,4 +1,5 @@
 import numpy as np 
+import simulate 
 
 def accuracy(y_test, pred): 
     pred_zero = pred == 0

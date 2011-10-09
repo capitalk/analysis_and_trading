@@ -1,3 +1,9 @@
+import cloud 
+import boto 
+import os 
+import tempfile 
+from dataset import Dataset 
+
 AWS_ACCESS_KEY_ID = 'AKIAITZSJIMPWRM54I4Q' 
 AWS_SECRET_ACCESS_KEY = '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' 
 
@@ -9,10 +15,6 @@ def get_hdf_bucket(bucket='capk-fxcm'):
     conn = boto.connect_s3(AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
     return conn.get_bucket(bucket)
 
-import os 
-import tempfile 
-import boto 
-from dataset import Dataset 
 
 def load_s3_file(filename, max_failures=2, cache_dir='/s3_cache'):     
     print "Loading", filename, "from S3"
