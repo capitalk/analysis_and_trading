@@ -30,139 +30,8 @@ import signals
 import encoder     
 import sgd_cascade
 import balanced_ensemble
-from dataset import Dataset 
-from expr_lang import Evaluator 
-
-
-                                
-def accuracy(y_test, pred): 
-    pred_zero = pred == 0
-    num_zero = np.sum(pred_zero)
-    
-    pred_pos = pred > 0
-    num_pos = np.sum(pred_pos) 
-    
-    pred_neg = pred < 0
-    num_neg = np.sum(pred_neg) 
-    num_nonzero = num_pos + num_neg 
-    
-    y_test_pos = y_test > 0 
-    y_test_neg = y_test < 0
-    y_test_zero = y_test == 0
-    tp = np.sum(y_test_pos & pred_pos)
-    tz = np.sum(y_test_zero & pred_zero)
-    tn = np.sum(y_test_neg & pred_neg)
-    
-    fp = num_pos - tp 
-    fn = num_neg - tn 
-    fz = num_zero - tz 
-    total = float(tp + fp + tn + fn)
-    if total > 0: accuracy = (tp + tn) / total 
-    else: accuracy = 0.0 
-    return accuracy, tp, fp, tn, fn, tz, fz
-        
-    
 
     
-def eval_prediction(ts, bids, offers, pred, actual, currency_pair, cut=0.0015):
-
-    profit_series = simulate.aggressive_with_hard_thresholds(ts, bids, offers, pred, currency_pair, max_loss_prct = cut, max_hold_time=30000)
-    #profit_series, _, _ = simulate.aggressive(ts, bids, offers, pred, currency_pair)
-    sum_profit = np.sum(profit_series)
-    ntrades = np.sum(profit_series != 0)
-    if ntrades > 0: profit_per_trade = sum_profit / float(ntrades)
-    else: profit_per_trade = 0 
-    
-    raw_accuracy, tp, fp, tn, fn, tz, fz = accuracy(actual, pred)
-    result = {
-        'profit': sum_profit, 
-        'ntrades': ntrades, 
-        'ppt': profit_per_trade, 
-        'accuracy': raw_accuracy, 
-        'tp': tp, 'fp': fp, 
-        'tn': tn,  'fn': fn, 
-        'tz': tz, 'fz': fz
-    }
-    return result 
-
-
-def confusion(pred, actual):
-    """Given a predicted binary label vector and a ground truth returns a tuple containing the counts for:
-    true positives, false positives, true negatives, false negatives """
-    
-    # implemented using indexing instead of boolean mask operations
-    # since the positive labels are expecetd to be sparse 
-    n = len(pred)
-    pred_nz_mask = (pred != 0)
-    pred_nz_indices = np.nonzero(pred_nz_mask)[0]
-        
-    total_nz = len(pred_nz_indices)
-    tp = sum(pred[pred_nz_indices] == actual[pred_nz_indices])
-    fp = total_nz - tp 
-    actual_nz_mask = (actual != 0)
-    actual_nz_indices = np.nonzero(actual_nz_mask)[0]
-        
-    fn = sum(1 - pred[actual_nz_indices])
-    tn = n - tp - fp - fn 
-    return tp, fp, tn, fn 
-        
-def eval_all_thresholds(times, bids, offers, target_sign, target_probs, actual, ccy):
-    best_score = -100
-    best_precision = 0
-    best_recall = 0
-    
-    best_thresh = 0 
-    best_pred = (target_probs >= 0).astype('int')
-    
-    precisions = []
-    recalls = []
-    f_scores = []
-    
-    thresholds = .2 + np.arange(80) / 100.0
-    
-    print "Evaluating threshold"
-    for t in thresholds:
-        pred = target_sign * (target_probs >= t).astype('int') 
-        
-        # compute confusion matrix with masks instead of 
-        tp, fp, tn, fn = confusion(pred, actual) 
-        total_pos = tp + fp
-        
-        if total_pos > 0: precision = tp / float(total_pos)
-        else: precision = 0
-        
-        recall = tp / float(tp + fn)
-        beta = 0.25
-        
-        if precision > 0 and recall > 0:
-            f_score = (1 + beta**2) * (precision * recall) / ((beta**2) * precision + recall)
-        else:
-            f_score = 0.0 
-        print "Threshold:", t, "precision =", precision, "recall =", recall, "f_score =", f_score 
-        precisions.append(precision)
-        recalls.append(recall)
-        f_scores.append(f_score)
-        
-        if f_score > best_score: 
-            best_score = f_score 
-            best_precision = precision 
-            best_recall = recall 
-            best_thresh = t
-            best_pred = pred
-            
-    detailed_result = eval_prediction(times, bids, offers, best_pred, actual, ccy)
-    return {
-        'best_thresh': best_thresh, 
-        'best_precision': best_precision, 
-        'best_recall': best_recall, 
-        'best_score': best_score, 
-        'ppt': detailed_result['ppt'], 
-        'ntrades': detailed_result['ntrades'], 
-        'all_thresholds': list(thresholds), 
-        'all_precisions': precisions, 
-        'all_recalls': recalls,
-    }
-        
     
 # load each file, extract features, concat them together 
 def worker(params, features, train_files, test_files): 
@@ -252,19 +121,15 @@ def prune(dicts, condition):
         if not condition(d):
             result.append(d)
     return result 
-        
     
 def gen_work_list(): 
-
     targets = [-1]
-    oversampling_factors = [0]
-    
+    oversampling_factors = [0]    
     
     class_weights = [1,2,3,4] 
     
     alphas = [0.000001, 0.0001, 0.01]
     Cs = [.01, 0.1, 1.0]
-    
 
     possible_encoder_params = {
         'dictionary_type': ['kmeans'], #None, 'sparse'],
@@ -285,7 +150,6 @@ def gen_work_list():
         'model_weighting':  ['f-score'], #, 'f-score'],
     }
     all_ensemble_params =  cartesian_product(possible_ensemble_params)
-    
     
     worklist = [] 
     for target in targets:
@@ -358,16 +222,6 @@ def param_search(train_files, test_files, features=features, debug=False):
             r = item['result']
             print [(k, r[k]) for k in sorted(r.keys())]
 
-def print_s3_hdf_files(): 
-    bucket = get_hdf_bucket()
-    filenames = [k.name for k in bucket.get_all_keys() if k.name.endswith('hdf')]
-    print "\n".join(filenames )
-
-def make_filenames(ecn, ccy, dates): 
-    ecn = ecn.upper()
-    ccy = ccy.upper().replace('/', '') 
-    dates = [d.replace('/', '_') for d in dates]
-    return [ecn +"_" + ccy + "_" + d + ".hdf" for d in dates] 
 
 if __name__ == "__main__":
     import argparse 
@@ -386,6 +240,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.train == [] or args.test == []: print_s3_hdf_files()
     else: 
-        training_files = make_filenames(args.ecn, args.ccy, args.train) + args.train_files
-        testing_files = make_filenames(args.ecn, args.ccy, args.test) + args.test_files 
+        training_files = make_s3_filenames(args.ecn, args.ccy, args.train) + args.train_files
+        testing_files = make_s3_filenames(args.ecn, args.ccy, args.test) + args.test_files 
         param_search(training_files, testing_files, debug=args.debug) 
