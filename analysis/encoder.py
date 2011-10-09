@@ -130,8 +130,11 @@ class FeatureEncoder():
             X = self.pca.fit_transform(X)
         else:
             raise RuntimeError("Unknown PCA type: " + self.pca_type)    
+        
+        if self.binning: X = bin_negatives(X)
+        
         if self.dictionary_type is None:
-            self.dictionary = None
+            self.dictionary = None            
         elif self.dictionary_type == 'kmeans':
             print "Running k-means..."
             self.dictionary = sklearn.cluster.MiniBatchKMeans( self.dictionary_size, init='k-means++')
@@ -147,7 +150,7 @@ class FeatureEncoder():
             raise RuntimeError("Unknown dictionary type: " + self.dictionary_type)
             
         if self.unit_norm: X = unit_norm_rows(X, in_place=in_place)
-        if self.binning: X = bin_negatives(X)
+
         return X
         
     # Two possible final steps:
@@ -171,6 +174,11 @@ class FeatureEncoder():
             old_shape = X.shape 
             X = self.pca.transform(X)
             print "PCA: ", old_shape, "=>", X.shape 
+    
+        if self.binning:
+            old_shape = X.shape 
+            X = bin_negatives(X)
+            print "Bin negatives, ", old_shape, "=>", X.shape             
             
         if self.dictionary is None:
             print "[encoder] No feature dictionary"
@@ -187,8 +195,4 @@ class FeatureEncoder():
         
         if self.unit_norm: X = unit_norm_rows(X, in_place=in_place)
 
-        if self.binning:
-            old_shape = X.shape 
-            X = bin_negatives(X)
-            print "Bin negatives, ", old_shape, "=>", X.shape             
         return X

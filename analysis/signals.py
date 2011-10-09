@@ -4,6 +4,44 @@ import analysis
 import bisect 
 import scipy 
 
+def aggressive_profit(data, max_hold_frames = 80, num_profitable_frames = 2, target_prct=0.0001, start=None, end=None):
+    ts = data['t/100ms'][start:end]
+    bids = data['bid/100ms'][start:end]
+    offers = data['offer/100ms'][start:end]
+    n = len(ts) 
+    signal = np.zeros(n)
+    for (idx, start_offer) in enumerate(offers):
+        if idx < n - max_hold_frames - 1:
+            bid_window = bids[idx+1:idx+max_hold_frames+1]
+            target_up = (1 + target_prct) * start_offer
+            profit_up =  np.sum(bid_window >= target_up) > num_profitable_frames 
+            
+            start_bid = bids[idx]
+            target_down = (1 - target_prct) * start_bid
+            offer_window = offers[idx+1:idx+max_hold_frames + 1]
+            profit_down = np.sum(offer_window <= target_down) > num_profitable_frames
+            
+            if profit_up and not profit_down:
+                signal[idx] = 1
+            elif profit_down and not profit_up:
+                signal[idx] = -1
+    return signal 
+
+def future_change(ys, short_horizon = 3, long_horizon=50):
+    n = len(ys)
+    if n <= long_horizon:
+        print "Signal shorter than long_horizon"
+        return np.zeros(n)
+    num_nonzero = n - long_horizon
+    signal = np.zeros(num_nonzero)
+    for i in xrange(num_nonzero):
+        i_short = i + short_horizon 
+        curr = np.mean(ys[i:i_short])
+        future = np.mean(ys[i_short : i + long_horizon])
+        future_delta = future - curr 
+        signal[i] = future_delta 
+    return np.concatenate([signal, np.zeros(long_horizon)])
+
 
 def future_window_statistic(ts, ys, fn, window_size = 15000):
     n = len(ts)
@@ -243,10 +281,7 @@ def min_bid_exceeds_offer_single_timeframe(data, wait_time=1500, hold_time=250, 
     return signal 
         
 
-def find_first(x):
-    indices = np.nonzero(x)[0] 
-    if len(indices) > 0: return indices[0]
-    else: return None 
+
     
 # current offer = offers averaged over network delay window
 # signal when future bid price exceeds current offer without first
@@ -283,39 +318,3 @@ def bid_exceeds_offer_before_drop(data, max_drop = .00001, min_profit=0.00005, m
         
     return signal
 
-# given a signal, remove any non-zero elements that occur in isolation 
-def clean_signal(pred, win_size = 5):
-    pred = pred.copy()
-    for i, curr in enumerate(pred):
-        first_idx = max(i-win_size+1, 0)
-        last_idx = i+win_size
-        if (curr != 0) and np.all(pred[first_idx:i]==0) and np.all(pred[i+1:last_idx] == 0):
-            pred[i] = 0
-    return pred 
-                                
-def accuracy(y_test, pred): 
-    pred_zero = pred == 0
-    num_zero = np.sum(pred_zero)
-    
-    pred_pos = pred > 0
-    num_pos = np.sum(pred_pos) 
-    
-    pred_neg = pred < 0
-    num_neg = np.sum(pred_neg) 
-    num_nonzero = num_pos + num_neg 
-    
-    y_test_pos = y_test > 0 
-    y_test_neg = y_test < 0
-    y_test_zero = y_test == 0
-    tp = np.sum(y_test_pos & pred_pos)
-    tz = np.sum(y_test_zero & pred_zero)
-    tn = np.sum(y_test_neg & pred_neg)
-    
-    fp = num_pos - tp 
-    fn = num_neg - tn 
-    fz = num_zero - tz 
-    total = float(tp + fp + tn + fn)
-    if total > 0: accuracy = (tp + tn) / total 
-    else: accuracy = 0.0 
-    return accuracy, tp, fp, tn, fn, tz, fz
-    

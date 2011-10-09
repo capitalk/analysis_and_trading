@@ -1,8 +1,8 @@
 
 features = [ 
     'log offer_vol/mean/50s safe_div bid_vol/mean/50s', # log ratio of volumes 
-    '(midprice/mean/5s - midprice/mean/500s) safe_div midprice/std/500s', # what's the z-score of the past 100ms of offers relative to a 500s gaussian
-    '(midprice/mean/5s - midprice/mean/50s) safe_div midprice/std/50s', # what's the z-score of the past 100ms of offers relative to a 500s gaussian
+    '(midprice/mean/5s - midprice/mean/50s) safe_div midprice/std/50s', # z-score of 5s midprice against 50s gaussian
+    '(midprice/mean/1s - midprice/mean/5s) safe_div midprice/std/1s', # z-score of 1s midprice against 5s gaussian
     'log midprice/mean/5s % weighted_total_price/mean/5s',  # ratio between the midprice and the volume weighted average of all levels
     'spread/mean/5s', 
     'null_100ms_frame/mean/50s', # what percentage of 100ms frames have had messages arriving?
@@ -17,78 +17,22 @@ features = [
     "clean log bid_range/mean/5s safe_div spread/mean/50s", # how many spreads wide is the verical bid range? 
     "clean log offer_range/mean/5s safe_div spread/mean/50s", # how many spreads wide is the vertical offer range? 
     't % 86400000' # t is milliseconds since midnight, divide by milliseconds in day to normalize
-    ]
-
-# pairwise product features: '33 = 1st & last' '73 = 3rd & 6th' 
+]
 
 import numpy as np     
-import os 
-import tempfile 
-
-import boto 
 import sklearn 
 import sklearn.linear_model 
 import cloud
 
-
+from aws_helpers import * 
 import simulate
-#import signals     
+import signals     
 import encoder     
 import sgd_cascade
 import balanced_ensemble
 from dataset import Dataset 
 from expr_lang import Evaluator 
-#from analysis import check_data 
 
-AWS_ACCESS_KEY_ID = 'AKIAITZSJIMPWRM54I4Q' 
-AWS_SECRET_ACCESS_KEY = '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' 
-
-def aggressive_profit(data, max_hold_frames = 80, num_profitable_frames = 2, target_prct=0.0001, start=None, end=None):
-    ts = data['t/100ms'][start:end]
-    bids = data['bid/100ms'][start:end]
-    offers = data['offer/100ms'][start:end]
-    n = len(ts) 
-    signal = np.zeros(n)
-    for (idx, start_offer) in enumerate(offers):
-        if idx < n - max_hold_frames - 1:
-            bid_window = bids[idx+1:idx+max_hold_frames+1]
-            target_up = (1 + target_prct) * start_offer
-            profit_up =  np.sum(bid_window >= target_up) > num_profitable_frames 
-            
-            start_bid = bids[idx]
-            target_down = (1 - target_prct) * start_bid
-            offer_window = offers[idx+1:idx+max_hold_frames + 1]
-            profit_down = np.sum(offer_window <= target_down) > num_profitable_frames
-            
-            if profit_up and not profit_down:
-                signal[idx] = 1
-            elif profit_down and not profit_up:
-                signal[idx] = -1
-    return signal 
-
-def future_change(ys, horizon = 100):
-    n = len(ys)
-    signal = np.zeros(n)
-    for i in xrange(n-1):
-        future_delta = ys[i+1:i+horizon] - ys[i] 
-        max_val = np.max(future_delta)
-        min_val = np.min(future_delta)
-        if max_val > -min_val: signal[i] = max_val 
-        else: signal[i] = min_val
-    return signal 
-
-def check_data(x):
-    inf_mask = np.isinf(x)
-    if np.any(inf_mask):
-        raise RuntimeError("Found inf: " + str(np.nonzero(inf_mask)))
-        
-    nan_mask = np.isnan(x)
-    if np.any(nan_mask):
-        raise RuntimeError("Found NaN: " + str(np.nonzero(nan_mask)))
-        
-    same_mask = (np.std(x, 0) <= 0.0000001)
-    if np.any(same_mask):
-        raise RuntimeError("Column all same: " + str(np.nonzero(same_mask)))
 
                                 
 def accuracy(y_test, pred): 
@@ -117,84 +61,7 @@ def accuracy(y_test, pred):
     else: accuracy = 0.0 
     return accuracy, tp, fp, tn, fn, tz, fz
         
-def get_hdf_bucket(bucket='capk-fxcm'):
-    # just in case
-    import socket
-    socket.setdefaulttimeout(None)
-    conn = boto.connect_s3(AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-    return conn.get_bucket(bucket)
-
-cache_dir = '/s3_cache'
-def load_s3_file(filename, max_failures=2):     
-    print "Loading", filename, "from S3"
-    cache_name = cache_dir + "/" + filename 
-    if os.path.exists(cache_name): 
-        print "Found", filename, "in environment's local cache, returning", cache_name 
-        return cache_name 
-    max_failures = 3 
-    fail_count = 0 
-    got_file = False 
-    while fail_count < max_failures and not got_file:
-        bucket = get_hdf_bucket()
-        key = bucket.get_key(filename) 
-        if key is None: raise RuntimeError("file not found: " + filename)
-        (fileid, local_filename) = tempfile.mkstemp(prefix=filename)
-        print "Created local file:", local_filename 
-        print "Copying data from S3"
-        try: 
-            key.get_contents_to_filename(local_filename)
-            got_file = True 
-        except: 
-            print "Download from S3 failed" 
-            fail_count += 1
-            os.remove(local_filename) 
-            if fail_count >= max_failures: raise 
-            else: print "...trying again..."
-    return local_filename 
     
-def load_s3_files(filenames):
-    return [Dataset(load_s3_file(remote_filename)) for remote_filename in filenames]
-    
-def load_s3_files_in_parallel(filenames):
-    jobids = cloud.mp.map(load_s3_file, filenames)
-    local_filenames = cloud.mp.result(jobids)
-    return [Dataset(f) for f in local_filenames]
-    
-def dataset_to_feature_matrix(d, features=features): 
-    ev = Evaluator() 
-    ncols = len(features)
-    nrows = len(d['t'])
-    print "feature matrix shape:", [nrows, ncols]
-    result = np.zeros( [nrows, ncols] )
-    for (idx, f) in enumerate(features):
-        print "Retrieving feature ", f
-        vec = ev.eval_expr(f, env = d)
-        if np.any(np.isnan(vec)):
-            print "Warning: NaN in", f
-        elif np.any(np.isinf(vec)):
-            print "Warning: inf in", f
-        result[:, idx] = vec
-    return result
-
-def load_files(files, features=features, signal_fn=aggressive_profit): 
-    print "Loading datasets..."
-    datasets = load_s3_files(files) 
-    print "Flattening datasets into feature matrices..." 
-    matrices = [dataset_to_feature_matrix(d, features) for d in datasets] 
-    feature_data = np.concatenate(matrices)
-    print "Checking data validity..."
-    check_data(feature_data) 
-    print "Generating output signal..."
-    signal = np.concatenate([signal_fn(d) for d in datasets] )
-    times = np.concatenate([d['t/100ms'] for d in datasets])
-    bids = np.concatenate( [d['bid/100ms'] for d in datasets])
-    offers = np.concatenate( [d['offer/100ms'] for d in datasets])
-    currencies = [d.currency_pair for d in datasets]
-    print "Deleting local files..." 
-    for d in datasets:
-        d.hdf.close()
-#        os.remove(d.filename)
-    return feature_data, signal, times, bids, offers, currencies   
 
     
 def eval_prediction(ts, bids, offers, pred, actual, currency_pair, cut=0.0015):
@@ -265,7 +132,7 @@ def eval_all_thresholds(times, bids, offers, target_sign, target_probs, actual, 
         else: precision = 0
         
         recall = tp / float(tp + fn)
-        beta = 0.5
+        beta = 0.25
         
         if precision > 0 and recall > 0:
             f_score = (1 + beta**2) * (precision * recall) / ((beta**2) * precision + recall)
@@ -393,15 +260,15 @@ def gen_work_list():
     oversampling_factors = [0]
     
     
-    class_weights = [1] 
+    class_weights = [1,2,3,4] 
     
-    alphas = [0.00001]
+    alphas = [0.000001, 0.0001, 0.01]
     Cs = [.01, 0.1, 1.0]
     
 
     possible_encoder_params = {
-        'dictionary_type': [None, 'kmeans', 'sparse'],
-        'dictionary_size': [10, 20, 60],
+        'dictionary_type': ['kmeans'], #None, 'sparse'],
+        'dictionary_size': [75],
         'pca_type': [None, 'whiten'], 
         'compute_pairwise_products': [False], 
         'binning': [False, True]
@@ -411,11 +278,11 @@ def gen_work_list():
     
     possible_ensemble_params = {
         'balanced_bagging': [True], 
-        'num_classifiers': [20], #[100, 200]
+        'num_classifiers': [25], #[100, 200]
         'num_random_features': [0.5],
         'base_classifier': ['sgd'], 
-        'neutral_weight': [5], 
-        'model_weighting': ['logistic'],
+        'neutral_weight': [5,10,15,20,25], 
+        'model_weighting':  ['f-score'], #, 'f-score'],
     }
     all_ensemble_params =  cartesian_product(possible_ensemble_params)
     
