@@ -32,11 +32,19 @@ import encoder
 import sgd_cascade
 import balanced_ensemble
 
-    
+
+def get_dict(dicts, key):
+    if key in dicts: return dicts[key]
+    else return {}
     
 # load each file, extract features, concat them together 
 def worker(params, features, train_files, test_files): 
-    general_params, encoder_params, ensemble_params, model_params, train_params   = params 
+    general_params = get_dict(params, 'general')
+    encoder_params = get_dict(params, 'encoder')
+    ensemble_params = get_dict(params, 'ensemble')
+    model_params = get_dict( params, 'model')
+    train_params  = get_dict(params, 'training')
+    
     print "General params:", general_params 
     print "Encoder params:", encoder_params
     print "Ensemble params:", ensemble_params
@@ -59,7 +67,6 @@ def worker(params, features, train_files, test_files):
     print "Encoded shape:", train_data.shape 
     print "train_data[500]", train_data[500, :] 
     
-    
     model = balanced_ensemble.Ensemble(model_params=model_params, **ensemble_params)
     
     if 'class_weight' in train_params: model.fit(train_data, train_signal, class_weight=train_params['class_weight'])
@@ -69,7 +76,6 @@ def worker(params, features, train_files, test_files):
     del train_signal 
     
     print "Reminder, here were the params:", params 
-    
     print "Loading testing data..."
     test_data, test_signal, test_times, test_bids, test_offers, _ = load_files(test_files)
     
@@ -77,13 +83,9 @@ def worker(params, features, train_files, test_files):
     test_data = e.transform(test_data, in_place=True)
     
     print "test_data[500] =", test_data[500, :]
-    
-                    
     print "Evaluating full model"
     #pred = svm.predict(test_encoded)
     pred, probs = model.predict(test_data, return_probs=True) 
-    
-    
     if target:
         test_signal = target * (test_signal == target).astype('int')
         target_index = model.classes.index(1)
@@ -168,8 +170,14 @@ def gen_work_list():
                         else: 
                             all_model_params = [{ 'C': c} for c in Cs]
                     for model_params in all_model_params:
-                        param_tuple =  (general_params, encoder_params, ensemble_params, model_params, train_params)
-                        worklist.append (param_tuple)
+                        params =  {
+                            'general': general_params, 
+                            'encoder': encoder_params, 
+                            'ensemble': ensemble_params, 
+                            'model': model_params, 
+                            'training': train_params
+                        }
+                        worklist.append (params)
     return worklist 
 
 def init_cloud(): 
