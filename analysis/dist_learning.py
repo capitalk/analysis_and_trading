@@ -25,6 +25,7 @@ import sklearn.linear_model
 import cloud
 
 from aws_helpers import * 
+from evaluation import * 
 import simulate
 import signals     
 import encoder     
