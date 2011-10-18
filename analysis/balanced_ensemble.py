@@ -1,19 +1,17 @@
 import math 
 import numpy as np
-import sklearn 
 import sklearn.linear_model as lin 
 import sklearn.svm as svm 
 
 
 # create a bagged ensemble with rebalanced classes 
 class Ensemble:
-    # weighting = 'uniform' | 'accuracy' 
     # nfeatures = percent | 'sqrt' | 'log'
     # thresh = percent of votes required for a non-zero class 
-    def __init__(self, balanced_bagging=False, bag_prct=0.85, base_classifier='sgd', num_random_features=0.5, num_classifiers = 100, weighting='f-score', thresh=0.75, recall_importance=0.25, neutral_weight=5, model_params={}):
+    def __init__(self, balanced_bagging=False, bag_prct=0.85, base_classifier='sgd', num_random_features=0.5, num_classifiers = 100, model_weighting='logistic', thresh=0.75, recall_importance=0.25, neutral_weight=4, model_params={}):
         self.models = [] 
-        self.weighting = weighting
-        self.model_weights = None
+        self.model_weighting = model_weighting
+        self.model_scores = None
         self.model_features = [] 
         self.classes = [] 
         self.balanced_bagging = balanced_bagging
@@ -26,7 +24,22 @@ class Ensemble:
         self.neutral_weight = neutral_weight
         self.recall_importance = recall_importance 
         self.thresh = thresh 
-        
+    
+    def transform_to_classifer_space(self, X):
+        nmodels = len(self.models)
+        nrows = X.shape[0]
+        X2 = np.zeros( (nrows, nmodels) )
+        nnz = 0 
+        print "Transforming to classifier space.." 
+        for i, model in enumerate(self.models):
+            feature_indices = self.model_features[i]
+            y = model.predict(X[:, feature_indices])
+            nnz += np.sum(y != 0) 
+            X2[:, i] = y
+        total_elts = nrows * nmodels
+        print "Transformed sparsity = ", nnz, "/", (total_elts), "[", (nnz / float(total_elts)), "]"
+        return X2     
+    
     # each bootstrap sample consists of 75% of the rarest class and
     # equal poritions of all other classes 
     def fit(self, X, Y, class_weight=None):
@@ -36,6 +49,7 @@ class Ensemble:
         nfeatures = X.shape[1]
         
         if self.balanced_bagging:
+            
             class_slices = []
             class_outputs = []
             for c in self.classes:
@@ -44,12 +58,13 @@ class Ensemble:
                 class_outputs.append(Y[mask, :])
             min_size = np.min([x.shape[0] for x in class_slices])
             class_bag_size = int(min_size * self.bag_prct)
+            print "Balanced bagging, min class size =", class_bag_size 
             total_bag_size = (nclasses -1)* class_bag_size  + (self.neutral_weight * class_bag_size)
         else:
             total_bag_size = total_nrows
         
         
-        print "total_bag_size=", total_bag_size
+        print "total_bag_size = ", total_bag_size
         
         if self.num_random_features == 'sqrt':
             features_per_model = int(math.ceil(math.sqrt(nfeatures)))
@@ -115,75 +130,99 @@ class Ensemble:
             # compure F-score for model weighting and user feedback 
             actual_not_zero = (outputs != 0)
             actual_not_zero_count = np.sum(actual_not_zero)
-            print "  Actual NNZ: ", actual_not_zero_count
+            
             
             pred_not_zero = (pred != 0)
             pred_not_zero_count = np.sum(pred_not_zero)
-            print "  Predicted NNZ:", pred_not_zero_count
             
             correct = (outputs == pred)
             correct_not_zero = np.sum(correct & actual_not_zero, dtype='float') 
-            print "   Correct NNZ:", correct_not_zero 
             
-            precision = correct_not_zero / float(pred_not_zero_count)
-            print "  Precision:", precision 
+            print "   Correct NNZ:", correct_not_zero,  "Actual NNZ: ", actual_not_zero_count, "Predicted NNZ:", pred_not_zero_count
+
+            if pred_not_zero_count > 0: precision = correct_not_zero / float(pred_not_zero_count)
+            else: precision = 0.0
             
-            recall = correct_not_zero / float(actual_not_zero_count)
-            print "  Recall:", recall 
+            if actual_not_zero_count > 0: recall = correct_not_zero / float(actual_not_zero_count)
+            else: recall = 0.0
             
-            if precision > 0 or recall > 0:
+            if precision > 0 and recall > 0:
                 beta_squared = self.recall_importance ** 2
                 denom = beta_squared * precision + recall 
                 f_score = (1+beta_squared)* (precision * recall) / denom
             else: f_score = 0.0
-            print "  F-score:", f_score            
+            
+            print "  Precision:", precision , "Recall:", recall, "F-score:", f_score            
+            
             if f_score > 0: 
                 self.model_features.append(feature_indices)
                 f_scores.append(f_score)
                 self.models.append(model)
 
-            
-        f_scores = np.array(f_scores)
-        sum_f_scores = np.sum(f_scores)
-        if sum_f_scores == 0: 
-            print "!!!! All classifiers are terrible  !!!!"
-            self.model_weights = f_scores
+        
+        if len(f_scores) == 0:    
+            print "!!! No good classifiers kept !!!" 
         else:
-            self.model_weights = f_scores / sum_f_scores
-            # estimate how good each feature is 
-            counts = np.zeros(nfeatures)
-            feature_scores = np.zeros(nfeatures)
+            f_scores = np.array(f_scores)
+            sum_f_scores = np.sum(f_scores)
+            if sum_f_scores == 0: 
+                print "!!! All classifiers are terrible  !!!"
+                self.model_scores = f_scores
+            else:
+                self.model_scores = f_scores / sum_f_scores
+                # estimate how good each feature is 
+                counts = np.zeros(nfeatures)
+                feature_scores = np.zeros(nfeatures)
+                
+                for f, indices in zip(f_scores, self.model_features):
+                    counts[indices] += 1
+                    feature_scores[indices] += f
+                feature_scores /= counts 
+                print "Average feature scores:", feature_scores 
+                #sorted in ascending order
+                sort_indices = np.argsort(feature_scores)
+                print "Best 5 features:", sort_indices[-5:]
             
-            for f, indices in zip(f_scores, self.model_features):
-                counts[indices] += 1
-                feature_scores[indices] += f
-            feature_scores /= counts 
-            print "Average feature scores:", feature_scores 
-            #sorted in ascending order
-            sort_indices = np.argsort(feature_scores)
-            print "Best 5 features:", sort_indices[-5:]
+            if self.model_weighting == 'logistic':
+                X2 = self.transform_to_classifer_space(X)
+                print "Training logistic regression on top of ensemble outputs..."
+                self.gating_classifier = lin.LogisticRegression()
+                self.gating_classifier.fit(X2, Y, class_weight='auto')
+            else:
+                self.gating_classifier = None 
+            
 
     def predict(self, X, return_probs=False):
         cs = np.array(self.classes)
         nclasses = len(cs)
         nrows = X.shape[0]
-        votes = np.zeros( [nrows, nclasses], dtype='float')
-        indices = np.arange(nrows) 
-        
-        for i, model in enumerate(self.models):
-            weight = self.model_weights[i]
-            feature_indices = self.model_features[i]
-            y = model.predict(X[:, feature_indices])
-            curr_votes = weight * np.array([y == c for c in cs]).T    
-            votes += curr_votes
-
-        majority = cs[np.argmax(votes, 1)]
-        probs = votes / np.array([np.sum(votes, 1, dtype='float')]).T
-        # normalize to probabilities 
-        max_probs = np.max(probs, 1)
-        majority[max_probs < self.thresh] = 0
-        if return_probs: return majority, probs
-        else: return majority 
+        if len(self.models) == 0:
+            majority = np.zeros(nrows, dtype='int')
+            probs = np.zeros(nrows, nclasses, dtype='float')
+        else:
+            # if we have a classifier on top of the ensemble use it
+            if self.gating_classifier is not None:
+                X2 = self.transform_to_classifer_space(X)
+                probs = self.gating_classifier.predict_proba(X2)
+            # otherwise weight each model by f_score 
+            else:
+                votes = np.zeros( [nrows, nclasses], dtype='float')
+                for i, model in enumerate(self.models):
+                    weight = self.model_scores[i]
+                    feature_indices = self.model_features[i]
+                    y = model.predict(X[:, feature_indices])
+                    curr_votes = weight * np.array([y == c for c in cs]).T    
+                    votes += curr_votes
+                    probs = votes / np.array([np.sum(votes, 1, dtype='float')]).T
+            majority = cs[np.argmax(probs, 1)]
+            
+            # set any probabilities below threshold to neutral class 
+            max_probs = np.max(probs, 1)
+            majority[max_probs < self.thresh] = 0
+        if return_probs: 
+            return majority, probs
+        else: 
+            return majority 
         
     def __setstate__(self, state):
         self.__dict__ = state

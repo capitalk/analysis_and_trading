@@ -7,6 +7,42 @@ import scipy.stats
 import scipy.weave 
 
 
+
+def find_first_gte(x,v):
+    code = """
+        int nx = Nx[0];
+        double vf = PyFloat_AsDouble(v);
+        return_val = -1; 
+        for (int i = 0; i < nx; ++i) { 
+            if (x[i] >= vf) {
+                return_val = i;
+                break;
+            }
+        }
+        """
+    idx = scipy.weave.inline(code, ['x', 'v'], verbose=2)
+    if idx == -1: return None
+    else: return idx 
+
+
+
+def find_first_lte(x,v):
+    code = """
+        int nx = Nx[0];
+        double vf = PyFloat_AsDouble(v);
+        return_val = -1; 
+        for (int i = 0; i < nx; ++i) { 
+            if (x[i] <= vf) {
+                return_val = i;
+                break;
+            }
+        }
+        """
+    idx = scipy.weave.inline(code, ['x', 'v'], verbose=2)
+    if idx == -1: return None
+    else: return idx 
+    
+    
 def check_data(x):
     inf_mask = np.isinf(x)
     if np.any(inf_mask):
