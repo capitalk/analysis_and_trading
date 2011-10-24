@@ -8,7 +8,7 @@ import boto
 import sys
 from optparse import OptionParser
 
-def test_strategy(strategy_name, hdf_filename, min_profit_prct=0.0003, signal_window_time=100, min_window_signals=1, trade_size_usd=1000000, max_position=5000000, fill_function=None):
+def test_strategy(strategy_name, strategy_func, hdf_filename, min_profit_prct=0.0003, signal_window_time=100, min_window_signals=1, trade_size_usd=1000000, max_position=5000000, fill_function=None):
 
     if hdf_filename is None:
         raise RuntimeError('HDF File must be specified') 
@@ -18,12 +18,7 @@ def test_strategy(strategy_name, hdf_filename, min_profit_prct=0.0003, signal_wi
 
     (d, currency_pair, ts, bids, offers, bid_vols, offer_vols) =  simulate2.load_dataset(hdf_filename)  
 
-    #if strategy_name == "momentum1":
-    (signals, mean_spread, mean_range) = strategy_name(d)
-    #if strategy_name == "momentum2":
-    #    (signals, mean_spread, mean_range) = manual_classifiers.momentum2(d)
-    #if strategy_name == "active1":
-    #    (signals, mean_spread, mean_range) = manual_classifiers.active1(d)
+    (signals, mean_spread, mean_range) = strategy_func(d)
 
     (usd_pnl, pos_deltas, pos_run, closing_position, closing_pnl, usd_last_pos, ignored_signals) = \
             simulate2.execute_aggressive(ts, \
@@ -66,12 +61,12 @@ def test_strategy(strategy_name, hdf_filename, min_profit_prct=0.0003, signal_wi
                         mean_range,\
                         ignored_signals,\
                         tick_file = hdf_filename, \
-                        out_file=hdf_filename + "." + "run" + ".txt") 
+                        out_path='/tmp/') 
         
 
-TEST_STRATEGIES=[manual_classifiers.momentum1, 
-                manual_classifiers.momentum2,
-                manual_classifiers.active1]
+TEST_STRATEGIES=[{'momentum1':manual_classifiers.momentum1}, 
+                {'moementum2':manual_classifiers.momentum2},
+                {'active1':manual_classifiers.active1}]
 
 TEST_PARAMS = [
 {'profit': 0.0003,
@@ -130,10 +125,15 @@ if __name__ == '__main__':
     import s3_download_file
     parser = OptionParser()
     parser.add_option("-b", "--bucket", dest="bucket_name", help="Bucket name")
+    parser.add_option("-p", "--pair", dest="pair_name", help="Pair name")
     (options, args) = parser.parse_args()
     if options.bucket_name is None:
         print "Must specify bucket name"
         sys.exit(-1)
+    if options.pair_name is None:
+        print "No pair specified - testing all pairs - THIS MAY TAKE A WHILE!"
+    else:
+        print "Running tests on: ", options.pair_name
 
     logging.basicConfig()
     s3cxn = boto.connect_s3()
@@ -142,6 +142,13 @@ if __name__ == '__main__':
     if len(args) == 0:
         keys = bucket.get_all_keys()
         keys = [k.name for k in keys]
+        if options.pair_name is not None:
+            filter = upper(options.pair_name)
+            try:
+                keys = [k for k in keys if string.find(k.name, filter) != -1]
+            except ValueError:
+                print "On to the next one..." 
+             
     else:
         keys = args
 
@@ -154,8 +161,9 @@ if __name__ == '__main__':
                 s3_download_file.get_s3_file_to_local(s3cxn, bucket, k, k, EPHEMERAL0)
             for params in TEST_PARAMS:
                 for strategy in TEST_STRATEGIES:
-                    strategy_name = strategy
-                    test_strategy(strategy_name, EPHEMERAL0+k, min_profit_prct=params['profit'], signal_window_time=params['signal_window'], min_window_signals=params['min_signal_count']) 
+                    strategy_func = strategy[strategy.keys()[0]]
+                    strategy_name = strategy.keys()[0]
+                    test_strategy(strategy_name, strategy_func, EPHEMERAL0+k, min_profit_prct=params['profit'], signal_window_time=params['signal_window'], min_window_signals=params['min_signal_count']) 
 
 
 

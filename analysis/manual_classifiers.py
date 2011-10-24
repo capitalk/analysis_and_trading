@@ -68,19 +68,23 @@ def momentum2(dataset):
     bid_range_100ms = dataset['bid_range/100ms'] 
     spread = dataset['spread/100ms'] 
     crossed_books = [ s < 0 for s in spread]
+    last_bid = round(bid_mean_1s[0], 5)
+    last_offer = round(offer_mean_1s[0], 5)
     
     for idx in xrange(n):
         cur_mid_slope_500s =  mid_slope_500s[idx]  
         cur_mid_slope_1s =  mid_slope_1s[idx]  
-        curr_bid = bid_mean_1s[idx]
-        curr_offer = offer_mean_1s[idx]
+        curr_bid = round(bid_mean_1s[idx], 5)
+        curr_offer = round(offer_mean_1s[idx], 5)
         
         #print cur_mid_slope_1s, ' ', cur_mid_slope_500s
 
         if cur_mid_slope_1s > cur_mid_slope_500s and last_offer != curr_offer:# and cur_mid_slope_1s > 0 and cur_mid_slope_500s > 0:
+            print "last_offer: ", last_offer, "curr_offer: ", curr_offer
             signal[idx] = BUY 
 
         elif cur_mid_slope_1s < cur_mid_slope_500s and last_bid != curr_bid:# and cur_mid_slope_1s < 0 and cur_mid_slope_500s < 0:
+            print "last_bid: ", last_bid, "curr_bid: ", curr_bid
             signal[idx]  = SELL
 
         last_bid = curr_bid
