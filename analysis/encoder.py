@@ -1,8 +1,7 @@
 import numpy as np
 import scipy 
-#import scikits.learn
-#from scikits.learn import * 
 import sklearn 
+from sklearn.base import BaseEstimator
 import sklearn.cluster 
 import sklearn.decomposition
 
@@ -68,13 +67,8 @@ def bin_negatives(X):
         result[~is_neg, ncols+colidx] = 0
     return result 
     
-class FeatureEncoder():
-    def __getstate__(self): 
-        return self.__dict__
-        
-    def __setstate__(self, state):
-        self.__dict__ = state 
-  
+class FeatureEncoder(BaseEstimator):
+    
     def __init__(self, dictionary_type=None, dictionary_size = 25, pca_type=None, pca_size = 25, compute_pairwise_products=False, binning=False, unit_norm=False):
         """Options:
             dictionary_type = None | 'kmeans' | 'sparse' 

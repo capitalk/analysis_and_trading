@@ -126,7 +126,7 @@ def gen_work_list():
     all_encoders = [
         FeatureEncoder(**p) 
         for p in cartesian_product(possible_encoder_params) 
-        if (p['dictionary_type'] is not None or p['dictionary_size'] is None)
+        if (p['dictionary_size'] is not  None or p['dictionary_type'] is None)
     ]
     
     possible_model_params = { 
