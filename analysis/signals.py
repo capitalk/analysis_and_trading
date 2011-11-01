@@ -4,6 +4,7 @@ import analysis
 import bisect 
 import scipy 
 
+
 def aggressive_profit(data, max_hold_frames = 80, num_profitable_frames = 2, target_prct=0.0001, start=None, end=None):
     ts = data['t/100ms'][start:end]
     bids = data['bid/100ms'][start:end]
@@ -26,6 +27,10 @@ def aggressive_profit(data, max_hold_frames = 80, num_profitable_frames = 2, tar
             elif profit_down and not profit_up:
                 signal[idx] = -1
     return signal 
+
+
+def bid_offer_cross(data):
+    return aggressive_profit(data, target_prct = 0.0)
 
 def future_change(ys, short_horizon = 3, long_horizon=50):
     n = len(ys)

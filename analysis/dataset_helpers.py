@@ -1,3 +1,5 @@
+import numpy as np 
+from array_helpers import check_data 
 from aws_helpers import * 
 from expr_lang import Evaluator 
 from dataset import Dataset

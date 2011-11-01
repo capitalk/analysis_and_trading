@@ -7,30 +7,33 @@ from dataset_helpers import load_s3_data
 from features import features 
 from evaluation import eval_prediction, eval_all_thresholds
 import signals     
-import encoder    
-import balanced_ensemble
-
+from encoder import FeatureEncoder
+from treelearn import BaggedClassifier, SVM_Tree 
 
 def get_dict(dicts, key):
     if key in dicts: return dicts[key]
     else: return {}
-    
+
+
+def loader(files):
+    return load_s3_data(files, features=features, signal_fn=signals.bid_offer_cross) 
+        
 # load each file, extract features, concat them together 
 def worker(params, features, train_files, test_files): 
     general_params = get_dict(params, 'general')
-    encoder_params = get_dict(params, 'encoder')
-    ensemble_params = get_dict(params, 'ensemble')
-    model_params = get_dict( params, 'model')
     train_params  = get_dict(params, 'training')
+    encoder = params['encoder']
+    model = params['model']
+    
     
     print "General params:", general_params 
-    print "Encoder params:", encoder_params
-    print "Ensemble params:", ensemble_params
-    print "Model params:", model_params
-    print "Train params:", train_params 
+    print "Encoder:", encoder
+    print "Model:", model
+    print "Train params:", train_params     
     
     print "Loading training data..."
-    train_data, train_signal, train_times, train_bids, train_offers, currencies = load_s3_data(train_files, features=features, signal_fn=signals.aggressive_profit) 
+    
+    train_data, train_signal, train_times, train_bids, train_offers, currencies = loader(train_files)
     ntrain = train_data.shape[0] 
     if 'target' in general_params: target = general_params['target']
     else: target = None
@@ -39,31 +42,33 @@ def worker(params, features, train_files, test_files):
     # assume all files from same currency pair 
     ccy = currencies[0]
     
-    e = encoder.FeatureEncoder(**encoder_params)
+    
     print "Encoding training data..." 
-    train_data = e.fit_transform(train_data)
+    train_data = encoder.fit_transform(train_data)
     print "Encoded shape:", train_data.shape 
     print "train_data[500]", train_data[500, :] 
     
-    model = balanced_ensemble.Ensemble(model_params=model_params, **ensemble_params)
-    
-    if 'class_weight' in train_params: model.fit(train_data, train_signal, class_weight=train_params['class_weight'])
-    else: model.fit(train_data, train_signal)
+    if 'class_weight' in train_params: 
+        model.fit(train_data, train_signal, class_weight=train_params['class_weight'])
+    else: 
+        model.fit(train_data, train_signal)
     
     del train_data
     del train_signal 
     
     print "Reminder, here were the params:", params 
     print "Loading testing data..."
-    test_data, test_signal, test_times, test_bids, test_offers, _ = load_s3_data(test_files)
+    test_data, test_signal, test_times, test_bids, test_offers, _ = loader(test_files)
     
     print "Encoding test data" 
-    test_data = e.transform(test_data, in_place=True)
+    test_data = encoder.transform(test_data, in_place=True)
     
     print "test_data[500] =", test_data[500, :]
     print "Evaluating full model"
-    #pred = svm.predict(test_encoded)
-    pred, probs = model.predict(test_data, return_probs=True) 
+    
+    prob = model.predict_proba(test_data, return_probs=True) 
+    pred =  np.argmax(prob, axis=1)
+    
     if target:
         test_signal = target * (test_signal == target).astype('int')
         target_index = model.classes.index(1)
@@ -75,8 +80,8 @@ def worker(params, features, train_files, test_files):
     print '[model]'
     print model
     print '[encoder]'
-    print e.mean_
-    print e.std_
+    print encoder.mean_
+    print encoder.std_
     print '[result]' 
     print "precisions:", result['all_precisions']
     print "recalls:",  result['all_recalls']
@@ -89,7 +94,7 @@ def worker(params, features, train_files, test_files):
     # have to clear sample weights since SGDClassifier stupidly keeps them 
     # after training 
     #model.sample_weight = [] 
-    return {'params':params, 'result': result, 'encoder': e, 'model': model}
+    return {'params':params, 'result': result, 'encoder': encoder, 'model': model}
     
 def cartesian_product(options):
     import itertools
@@ -107,30 +112,43 @@ def gen_work_list():
     targets = [-1]
     oversampling_factors = [0]    
     
-    class_weights = [1,2,3,4] 
+    class_weights = [15] #,2,3,4] 
     
-    alphas = [0.000001, 0.0001, 0.01]
-    Cs = [.01, 0.1, 1.0]
+    alphas = [0.000001] #, 0.0001, 0.01]
 
     possible_encoder_params = {
-        'dictionary_type': ['kmeans'], #None, 'sparse'],
-        'dictionary_size': [75],
+        'dictionary_type': [None, 'kmeans'],
+        'dictionary_size': [None, 75],
         'pca_type': [None, 'whiten'], 
         'compute_pairwise_products': [False], 
-        'binning': [False, True]
+        'binning': [False]
     }
-    all_encoder_params = cartesian_product(possible_encoder_params)
-    all_encoder_params = prune(all_encoder_params, lambda d: d['dictionary_type'] is None and d['dictionary_size'] != 10)
+    all_encoders = [
+        FeatureEncoder(**p) 
+        for p in cartesian_product(possible_encoder_params) 
+        if (p['dictionary_type'] is not None or p['dictionary_size'] is None)
+    ]
+    
+    possible_model_params = { 
+        'C' : [0.1, 10.]
+    }
+    all_base_classifiers = [
+        SVM_Tree(**params) 
+        for params in cartesian_product(possible_model_params)
+    ]
     
     possible_ensemble_params = {
-        'balanced_bagging': [True], 
+        'base_classifier': all_base_classifiers,
         'num_classifiers': [25], #[100, 200]
-        'num_random_features': [0.5],
-        'base_classifier': ['sgd'], 
-        'neutral_weight': [5,10,15,20,25], 
-        'model_weighting':  ['f-score'], #, 'f-score'],
+        'weighting':  [0.25], 
+        'stacking': [True, False], 
+        'verbose': [True], 
+        'sample_percent': [0.1],
     }
-    all_ensemble_params =  cartesian_product(possible_ensemble_params)
+    all_ensembles = [
+        BaggedClassifier(**params)
+        for params in cartesian_product(possible_ensemble_params)
+    ]
     
     worklist = [] 
     for target in targets:
@@ -139,20 +157,14 @@ def gen_work_list():
                 'oversampling_factor': smote_factor, 
                 'target': target
             }
-            for encoder_params in all_encoder_params:
-                for ensemble_params in all_ensemble_params:
+            for encoder in all_encoders:
+                for model in all_ensembles:
                     for cw in class_weights:    
                         train_params = { 'class_weight': {0:1, 1:cw} }
-                        if ensemble_params['base_classifier'] == 'sgd':
-                            all_model_params = [{'alpha': alpha} for alpha in alphas]
-                        else: 
-                            all_model_params = [{ 'C': c} for c in Cs]
-                    for model_params in all_model_params:
                         params =  {
                             'general': general_params, 
-                            'encoder': encoder_params, 
-                            'ensemble': ensemble_params, 
-                            'model': model_params, 
+                            'encoder': encoder, 
+                            'model': model, 
                             'training': train_params
                         }
                         worklist.append (params)

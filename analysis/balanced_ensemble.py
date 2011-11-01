@@ -2,7 +2,7 @@ import math
 import numpy as np
 import sklearn.linear_model as lin 
 import sklearn.svm as svm 
-
+import treelearn 
 
 # create a bagged ensemble with rebalanced classes 
 class Ensemble:
@@ -112,6 +112,8 @@ class Ensemble:
                 model = lin.LogisticRegression(**self.model_keywords)
             elif self.base_classifier == 'nu-svm':
                 model = svm.NuSVC(nu=0.1, kernel='linear')
+            elif self.base_classifier == 'svm_tree':
+                model = treelearn.SVM_Tree(**self.model_keywords)
             else:
                 model = svm.LinearSVC(**self.model_keywords) # svm.SVC(kernel='poly', degree=2)
             model.fit(inputs, outputs, class_weight=class_weight)
