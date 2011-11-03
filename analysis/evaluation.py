@@ -1,7 +1,17 @@
 import numpy as np 
 import simulate 
+import sklearn.metrics 
 
-def accuracy(y_test, pred): 
+
+def eval_regression(y, pred): 
+    result = { 
+        'mse': sklearn.metrics.mean_square_error(y, pred), 
+        'prob_same_sign': np.sum(np.sign(y) == np.sign(pred)) / float(len(y))
+    }
+    return result 
+        
+
+def three_class_precision(y_test, pred): 
     pred_zero = pred == 0
     num_zero = np.sum(pred_zero)
     
@@ -23,12 +33,10 @@ def accuracy(y_test, pred):
     fn = num_neg - tn 
     fz = num_zero - tz 
     total = float(tp + fp + tn + fn)
-    if total > 0: accuracy = (tp + tn) / total 
-    else: accuracy = 0.0 
-    return accuracy, tp, fp, tn, fn, tz, fz
+    if total > 0: precision = (tp + tn) / total 
+    else: precision = 0.0 
+    return precision, tp, fp, tn, fn, tz, fz
         
-    
-
     
 def eval_prediction(ts, bids, offers, pred, actual, currency_pair, cut=0.0015):
 
@@ -39,12 +47,12 @@ def eval_prediction(ts, bids, offers, pred, actual, currency_pair, cut=0.0015):
     if ntrades > 0: profit_per_trade = sum_profit / float(ntrades)
     else: profit_per_trade = 0 
     
-    raw_accuracy, tp, fp, tn, fn, tz, fz = accuracy(actual, pred)
+    precision, tp, fp, tn, fn, tz, fz = three_class_precision(actual, pred)
     result = {
         'profit': sum_profit, 
         'ntrades': ntrades, 
         'ppt': profit_per_trade, 
-        'accuracy': raw_accuracy, 
+        'precision': precision,
         'tp': tp, 'fp': fp, 
         'tn': tn,  'fn': fn, 
         'tz': tz, 'fz': fz
