@@ -8,7 +8,9 @@ from features import features
 from evaluation import eval_prediction, eval_all_thresholds
 import signals     
 from encoder import FeatureEncoder
-from treelearn import BaggedClassifier, SVM_Tree 
+from treelearn import ClassifierEnsemble, RegressionEnsemble, ObliqueTree
+from treelearn import mk_sgd_tree, mk_svm_tree 
+from sklearn.linear_model import LogisticRegression, LinearRegression, Lasso 
 
 def get_dict(dicts, key):
     if key in dicts: return dicts[key]
@@ -16,7 +18,7 @@ def get_dict(dicts, key):
 
 
 def loader(files):
-    return load_s3_data(files, features=features, signal_fn=signals.bid_offer_cross) 
+    return load_s3_data(files, features=features, signal_fn=) 
         
 # load each file, extract features, concat them together 
 def worker(params, features, train_files, test_files): 
@@ -66,12 +68,13 @@ def worker(params, features, train_files, test_files):
     print "test_data[500] =", test_data[500, :]
     print "Evaluating full model"
     
-    prob = model.predict_proba(test_data, return_probs=True) 
-    pred =  np.argmax(prob, axis=1)
+    probs = model.predict_proba(test_data) 
+    pred =  np.argmax(probs, axis=1)
     
     if target:
         test_signal = target * (test_signal == target).astype('int')
-        target_index = model.classes.index(1)
+        classes = list(model.classes)
+        target_index = classes.index(1)
         target_probs = probs[:,target_index]
         result = eval_all_thresholds(test_times, test_bids, test_offers, target, target_probs, test_signal, ccy)
     else: result = eval_prediction(test_times, test_bids, test_offers, pred, test_signal, ccy)
@@ -108,45 +111,62 @@ def prune(dicts, condition):
             result.append(d)
     return result 
     
-def gen_work_list(): 
-    targets = [-1]
-    oversampling_factors = [0]    
-    
-    class_weights = [15] #,2,3,4] 
-    
-    alphas = [0.000001] #, 0.0001, 0.01]
+def init_cloud(): 
+    cloud.config.force_serialize_debugging = False
+    cloud.config.force_serialize_logging = False 
+    cloud.config.commit()
+    cloud.setkey(2579, "f228c0325cf687779264a0b0698b0cfe40148d65")
 
+def param_search(
+        signal = signals.bid_offer_cross, 
+        ensemble = ClassifierEnsemble, 
+        base_models=[mk_sgd_tree()],
+        num_models = [50], 
+        bagging_percents = [0.25], 
+        dict_types = [None, 'kmeans'], 
+        dict_sizes = [None, 50], 
+        pca_types =  [None, 'whiten'], 
+        compute_pairwise_products = [False], 
+        binning = [False], 
+        stacking_models = [None, LogisticRegression()],
+        debug=False):
+    print "Features:", features 
+    print "Training files:", train_files
+    print "Testing files:", test_files 
+    
+    def do_work(p): 
+        return worker(p, features, train_files, test_files)
+    
+     targets = [-1]
+    oversampling_factors = [0]    
+
+    class_weights = ['auto'] 
+    
+    
     possible_encoder_params = {
-        'dictionary_type': [None, 'kmeans'],
-        'dictionary_size': [None, 75],
-        'pca_type': [None, 'whiten'], 
-        'compute_pairwise_products': [False], 
-        'binning': [False]
+        'dictionary_type': dict_types,
+        'dictionary_size': dict_sizes, 
+        'pca_type': pca_types, 
+        'compute_pairwise_products': compute_pairwise_products, 
+        'binning': binning, 
     }
+    
     all_encoders = [
         FeatureEncoder(**p) 
         for p in cartesian_product(possible_encoder_params) 
         if (p['dictionary_size'] is not  None or p['dictionary_type'] is None)
     ]
     
-    possible_model_params = { 
-        'C' : [0.1, 10.]
-    }
-    all_base_classifiers = [
-        SVM_Tree(**params) 
-        for params in cartesian_product(possible_model_params)
-    ]
-    
     possible_ensemble_params = {
-        'base_classifier': all_base_classifiers,
-        'num_classifiers': [25], #[100, 200]
+        'base_model': base_models,
+        'num_models': num_models, 
         'weighting':  [0.25], 
-        'stacking': [True, False], 
+        'stacking_model': stacking_models, 
         'verbose': [True], 
-        'sample_percent': [0.1],
+        'bagging_percent': bagging_percents,
     }
     all_ensembles = [
-        BaggedClassifier(**params)
+        ensemble(**params)
         for params in cartesian_product(possible_ensemble_params)
     ]
     
@@ -160,7 +180,7 @@ def gen_work_list():
             for encoder in all_encoders:
                 for model in all_ensembles:
                     for cw in class_weights:    
-                        train_params = { 'class_weight': {0:1, 1:cw} }
+                        train_params = { 'class_weight': cw }
                         params =  {
                             'general': general_params, 
                             'encoder': encoder, 
@@ -168,32 +188,15 @@ def gen_work_list():
                             'training': train_params
                         }
                         worklist.append (params)
-    return worklist 
-
-def init_cloud(): 
-    cloud.config.force_serialize_debugging = False
-    cloud.config.force_serialize_logging = False 
-    cloud.config.commit()
-    cloud.setkey(2579, "f228c0325cf687779264a0b0698b0cfe40148d65")
-
-def param_search(train_files, test_files, features=features, debug=False):
-    print "Features:", features 
-    print "Training files:", train_files
-    print "Testing files:", test_files 
-    
-    def eval_param(p): 
-        return worker(p, features, train_files, test_files)
-    
-    params = gen_work_list()
     if debug: 
         print "[Debug mode]"
-        result_list = map(eval_param, params[:1])
+        result_list = map(do_work, worklist[:1])
         for params, features, e, svm, result in result_list:
             print params, "=>", result 
     else: 
         init_cloud() 
         label = ", ".join(train_files)
-        jobids = cloud.map(eval_param, params, _fast_serialization=2, _type='m1', _label=label, _env='param_search') 
+        jobids = cloud.map(do_work, worklist, _fast_serialization=2, _type='m1', _label=label, _env='param_search') 
         results = [] 
         print "Launched", len(params), "jobs, waiting for results..."
         for x in cloud.iresult(jobids):
@@ -233,12 +236,31 @@ if __name__ == "__main__":
     parser.add_argument("--test", dest="test", help="testing dates", nargs='*', default=[])
     parser.add_argument("--test_files", dest="test_files", help="testing files", nargs='*', default=[])
     parser.add_argument("--debug", action='store_true', default=False, dest='debug')
-    #todo: make this actually work 
+    
     parser.add_argument("--output", dest="output", default=None, help="output file for model and encoder")
-    # todo: allow either parameter sweep or manually specify learning params  ie --thresh 0.9 0.95 
+    
+    
+    parser.add_argument("--dict_size", dest="dict_size", nargs="*", default=[None, 'kmeans'])
+    parser.add_argument("--dict_type", dest="dict_type", nargs="*", default=[None, 50]), 
+    parser.add_argument("--bagging_prct", dest="bagging_prct", nargs="*", default=[0.25]), 
+    parser.add_argument("--regression", dest='regression', action='store_true', default=False)
+    
+    
     args = parser.parse_args()
     if args.train == [] or args.test == []: print_s3_hdf_files()
     else: 
         training_files = make_s3_filenames(args.ecn, args.ccy, args.train) + args.train_files
         testing_files = make_s3_filenames(args.ecn, args.ccy, args.test) + args.test_files 
+        
+        if args.regression: 
+            ensemble = RegressionEnsemble
+            base_models = [mk_regression_tree()] 
+            stacking_models = [None, LinearRegression]
+            signals = signals.
+        else:
+            ensemble = ClassifierEnsemble
+            base_models =[mk_sgd_tree()]
+            stacking_models = [None, LogisticRegression]
+            signal = signals.bid_offer_cross
+            
         param_search(training_files, testing_files, debug=args.debug) 
