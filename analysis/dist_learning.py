@@ -36,8 +36,8 @@ def worker(params, features, train_files, test_files):
     print "Loading training data..."
     
     regression = general_params['regression']
-    
-    train_data, train_signal, train_times, train_bids, train_offers, currencies = loader(train_files, general_params['signal'])
+    signal_fn = general_params['signal']
+    train_data, train_signal, train_times, train_bids, train_offers, currencies = loader(train_files, signal_fn)
     ntrain = train_data.shape[0] 
     if 'target' in general_params: target = general_params['target']
     else: target = None
@@ -61,7 +61,7 @@ def worker(params, features, train_files, test_files):
     
     print "Reminder, here were the params:", params 
     print "Loading testing data..."
-    test_data, test_signal, test_times, test_bids, test_offers, _ = loader(test_files)
+    test_data, test_signal, test_times, test_bids, test_offers, _ = loader(test_files, signal_fn)
     
     print "Encoding test data" 
     test_data = encoder.transform(test_data, in_place=True)
@@ -105,12 +105,6 @@ def cartesian_product(options):
     combinations = [x for x in apply(itertools.product, options.values())]
     return [dict(zip(options.keys(), p)) for p in combinations]
 
-def prune(dicts, condition):
-    result = []
-    for d in dicts:
-        if not condition(d):
-            result.append(d)
-    return result 
     
 def init_cloud(): 
     cloud.config.force_serialize_debugging = False
@@ -144,8 +138,6 @@ def param_search(
 
     oversampling_factors = [0]    
 
-    class_weights = ['auto'] 
-    
     
     possible_encoder_params = {
         'dictionary_type': dict_types,
@@ -174,6 +166,10 @@ def param_search(
         for params in cartesian_product(possible_ensemble_params)
     ]
     
+    if regression:
+        train_params = {}
+    else: 
+        train_params = { 'class_weight': {0:1, 1:10, -1:10} }
     worklist = [] 
     for smote_factor in oversampling_factors:
         general_params = {
@@ -183,15 +179,13 @@ def param_search(
         }
         for encoder in all_encoders:
             for model in all_ensembles:
-                for cw in class_weights:    
-                    train_params = { 'class_weight': cw }
-                    params =  {
-                        'general': general_params, 
-                        'encoder': encoder, 
-                        'model': model, 
-                        'training': train_params
-                    }
-                    worklist.append (params)
+                params =  {
+                    'general': general_params, 
+                    'encoder': encoder, 
+                    'model': model, 
+                    'training': train_params
+                }
+                worklist.append (params)
     if debug: 
         print "[Debug mode]"
         result_list = map(do_work, worklist[:1])
@@ -202,7 +196,7 @@ def param_search(
         label = ", ".join(train_files)
         jobids = cloud.map(do_work, worklist, _fast_serialization=2, _type='m1', _label=label, _env='param_search') 
         results = [] 
-        print "Launched", len(params), "jobs, waiting for results..."
+        print "Launched", len(worklist), "jobs, waiting for results..."
         for x in cloud.iresult(jobids):
             if x is not None:
                 results.append(x)
@@ -268,7 +262,7 @@ if __name__ == "__main__":
         
         if args.regression: 
             ensemble = RegressionEnsemble
-            base_models = [mk_regression_tree()] 
+            base_models = [LinearRegression()] 
             stacking_models = [None, LinearRegression]
             signals = signals.prct_future_midprice_change
         else:
