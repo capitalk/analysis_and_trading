@@ -7,6 +7,97 @@ import scipy.stats
 
 from array_helpers import * 
 from dataset_helpers import * 
+
+
+def counts_to_probs(xs):
+    xs = np.atleast_2d(xs)
+    nrows, ncols = xs.shape 
+    probs = np.zeros( [nrows, ncols] )
+    sums = np.sum(xs, axis=1)
+    mask = sums > 0
+    normalizer = np.array([sums[mask]], dtype='float').T
+    probs[mask] = xs[mask] / normalizer
+    return probs 
+
+def cumulative_tick_movement_counts(xs, n):
+    xs = np.atleast_1d(xs)
+    deltas = xs[1:] - xs[:-1]
+    ticks = np.sign(deltas)
+    counts = np.zeros([2*n+1, 3], dtype='int')
+    
+    for i, x in enumerate(ticks[1:]):
+        subseq = ticks[i-n:i]
+        cumulative = np.sum(subseq)
+        row = n + cumulative 
+        counts[row, x + 1] += 1
+    return counts 
+
+
+
+def cumulative_tick_movement_probs(xs, n):
+    counts = cumulative_tick_movement_counts(xs, n)
+    return counts_to_probs(counts)
+
+def sign_seq_counts(xs, n):
+    """
+    probability of sign(delta) = +1/-1 after k previous ticks in the same direction
+    ----
+    xs : float array, any time series
+    n : int, max length of sequence 
+    """
+    xs = np.atleast_1d(xs)
+    deltas = xs[1:] - xs[:-1] 
+    ticks = np.sign(deltas)
+    all_counts = {}
+    DOWN_COL = 0
+    SAME_COL = 1
+    UP_COL = 2
+    
+    for past_direction in [-1, 0, 1]:
+        all_counts[past_direction] = np.zeros([n, 3], dtype='int')
+        
+    counter = 0 
+    sign = ticks[0]
+    
+    for x in ticks[1:]:
+        if counter >= n: 
+            counter = n - 1
+        
+        counts = all_counts[sign]
+        
+        if x > 0: 
+            counts[counter, UP_COL] += 1
+        elif x == 0:
+            counts[counter, SAME_COL] += 1
+        else:
+            counts[counter, DOWN_COL] += 1
+        
+        if x == sign:
+            counter += 1
+        else: 
+            counter = 0
+            sign = x 
+            
+    return all_counts
+
+    
+def sign_seq_probs(xs, n):
+    all_counts = sign_seq_counts(xs, n)
+    all_probs = {}
+    for k, counts in all_counts.items():
+        all_probs[k] = counts_to_probs(counts)
+         
+    return all_probs
+    
+def plot_seq_probs(probs, title=""):
+    import pylab
+    # only plot the up and down probs 
+    pylab.plot(probs[:, [0, 2]])
+    pylab.xlabel('length of same-direction sequence')
+    pylab.ylabel('prob of next tick movement')
+    pylab.legend(['downward', 'upward' ])
+    pylab.title(title)
+    pylab.show()
     
 
 def density_per_millisecond(t): 
