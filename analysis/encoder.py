@@ -1,8 +1,7 @@
 import numpy as np
 import scipy 
-#import scikits.learn
-#from scikits.learn import * 
 import sklearn 
+from sklearn.base import BaseEstimator
 import sklearn.cluster 
 import sklearn.decomposition
 
@@ -68,13 +67,8 @@ def bin_negatives(X):
         result[~is_neg, ncols+colidx] = 0
     return result 
     
-class FeatureEncoder():
-    def __getstate__(self): 
-        return self.__dict__
-        
-    def __setstate__(self, state):
-        self.__dict__ = state 
-  
+class FeatureEncoder(BaseEstimator):
+    
     def __init__(self, dictionary_type=None, dictionary_size = 25, pca_type=None, pca_size = 25, compute_pairwise_products=False, binning=False, unit_norm=False):
         """Options:
             dictionary_type = None | 'kmeans' | 'sparse' 
@@ -130,8 +124,11 @@ class FeatureEncoder():
             X = self.pca.fit_transform(X)
         else:
             raise RuntimeError("Unknown PCA type: " + self.pca_type)    
+        
+        if self.binning: X = bin_negatives(X)
+        
         if self.dictionary_type is None:
-            self.dictionary = None
+            self.dictionary = None            
         elif self.dictionary_type == 'kmeans':
             print "Running k-means..."
             self.dictionary = sklearn.cluster.MiniBatchKMeans( self.dictionary_size, init='k-means++')
@@ -147,7 +144,7 @@ class FeatureEncoder():
             raise RuntimeError("Unknown dictionary type: " + self.dictionary_type)
             
         if self.unit_norm: X = unit_norm_rows(X, in_place=in_place)
-        if self.binning: X = bin_negatives(X)
+
         return X
         
     # Two possible final steps:
@@ -171,6 +168,11 @@ class FeatureEncoder():
             old_shape = X.shape 
             X = self.pca.transform(X)
             print "PCA: ", old_shape, "=>", X.shape 
+    
+        if self.binning:
+            old_shape = X.shape 
+            X = bin_negatives(X)
+            print "Bin negatives, ", old_shape, "=>", X.shape             
             
         if self.dictionary is None:
             print "[encoder] No feature dictionary"
@@ -187,8 +189,4 @@ class FeatureEncoder():
         
         if self.unit_norm: X = unit_norm_rows(X, in_place=in_place)
 
-        if self.binning:
-            old_shape = X.shape 
-            X = bin_negatives(X)
-            print "Bin negatives, ", old_shape, "=>", X.shape             
         return X

@@ -2,7 +2,7 @@ import math
 import numpy as np
 import sklearn.linear_model as lin 
 import sklearn.svm as svm 
-
+import treelearn 
 
 # create a bagged ensemble with rebalanced classes 
 class Ensemble:
@@ -74,7 +74,6 @@ class Ensemble:
             features_per_model = int(math.ceil(nfeatures * self.num_random_features))
         print "Features per model:", features_per_model
         
-        if class_weight is None: class_weight = 'auto'
         print "[Class Weights]", class_weight 
         
         f_scores = [] 
@@ -113,6 +112,8 @@ class Ensemble:
                 model = lin.LogisticRegression(**self.model_keywords)
             elif self.base_classifier == 'nu-svm':
                 model = svm.NuSVC(nu=0.1, kernel='linear')
+            elif self.base_classifier == 'svm_tree':
+                model = treelearn.SVM_Tree(**self.model_keywords)
             else:
                 model = svm.LinearSVC(**self.model_keywords) # svm.SVC(kernel='poly', degree=2)
             model.fit(inputs, outputs, class_weight=class_weight)
@@ -187,7 +188,7 @@ class Ensemble:
                 X2 = self.transform_to_classifer_space(X)
                 print "Training logistic regression on top of ensemble outputs..."
                 self.gating_classifier = lin.LogisticRegression()
-                self.gating_classifier.fit(X2, Y, class_weight='auto')
+                self.gating_classifier.fit(X2, Y, class_weight=class_weight)
             else:
                 self.gating_classifier = None 
             
@@ -198,7 +199,7 @@ class Ensemble:
         nrows = X.shape[0]
         if len(self.models) == 0:
             majority = np.zeros(nrows, dtype='int')
-            probs = np.zeros(nrows, nclasses, dtype='float')
+            probs = np.zeros( [nrows, nclasses], dtype='float')
         else:
             # if we have a classifier on top of the ensemble use it
             if self.gating_classifier is not None:
