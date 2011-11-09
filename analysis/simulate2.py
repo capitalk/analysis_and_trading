@@ -257,8 +257,97 @@ def size_trade(desired_size, avail_size, trade_size_scalar, conversion_rate, vol
         print "size_trade:", trade_size, avail_size, trade_size_scalar, 1./trade_size_scalar, trade_size*volume_scalar*conversion_rate
     return trade_size*volume_scalar*conversion_rate
 
-def trade(position_price, position, trade_size, bid, offer, bid_vol, offer_vol):
-    return long_pos, short_pos, long_paid, short_recd, long_avg_price, short_avg_price, new_position, new_position_price, trade_pnl
+def test_TRADE_AGGRESSIVE():
+    long_vol = 0;
+    short_vol = 0;
+    long_paid = 0;
+    short_recv = 0;
+    this_trade_pnl = 0;
+
+    (long_vol, short_vol, long_paid, short_recv, this_trade_pnl) = TRADE_AGGRESSIVE(0, 0, 0, 0, "B", 1, 1.0, 1.01, 1, 1)
+    print "long_vol: ", long_vol, " short_vol: ", short_vol, " short_recv: ", short_recv, " long_paid: ", long_paid, " this_trade_pnl: ", this_trade_pnl
+    assert(long_vol == 1 and short_vol == 0 and short_recv == 0 and long_paid == 1.01 and this_trade_pnl == 0)
+
+    (long_vol, short_vol, long_paid, short_recv, this_trade_pnl) = TRADE_AGGRESSIVE(long_vol, short_vol, long_paid, short_recv, "B", 1, 1.02, 1.03, 34, 434)
+    print "long_vol: ", long_vol, " short_vol: ", short_vol, " short_recv: ", short_recv, " long_paid: ", long_paid, " this_trade_pnl: ", this_trade_pnl
+    assert(long_vol == 2 and short_vol == 0 and short_recv == 0 and long_paid == 2.04 and this_trade_pnl == 0)
+
+    (long_vol, short_vol, long_paid, short_recv, this_trade_pnl) = TRADE_AGGRESSIVE(long_vol, short_vol, long_paid, short_recv, "S", 3, 1.03, 1.04, 33, 324)
+    print "long_vol: ", long_vol, " short_vol: ", short_vol, " short_recv: ", short_recv, " long_paid: ", long_paid, " this_trade_pnl: ", this_trade_pnl
+    assert(long_vol == 2 and short_vol == 3 and short_recv == 3.09 and long_paid == 2.04 and round(this_trade_pnl, 2) == 0.02)
+
+    (long_vol, short_vol, long_paid, short_recv, this_trade_pnl) = TRADE_AGGRESSIVE(long_vol, short_vol, long_paid, short_recv, "B",1 , 1.03, 1.04, 33, 324)
+    print "long_vol: ", long_vol, " short_vol: ", short_vol, " short_recv: ", short_recv, " long_paid: ", long_paid, " this_trade_pnl: ", this_trade_pnl
+    assert(long_vol == 3 and short_vol == 3 and short_recv == 3.09 and long_paid == 3.08 and round(this_trade_pnl, 2) == 0.01)
+    
+    
+
+def TRADE_AGGRESSIVE(long_vol, short_vol, long_paid, short_recv, side, trade_size, curr_bid, curr_offer, curr_bid_vol, curr_offer_vol):
+    assert(long_vol >= 0)
+    assert(short_vol >= 0)
+    assert(long_paid >= 0)
+    assert(short_recv >= 0)
+    assert(trade_size > 0)
+
+    l = logging.getLogger()
+    sh = logging.StreamHandler()
+    sh.setLevel(logging.DEBUG)
+    #l.addHandler(sh)
+    #l.debug("REQUEST TRADE %s : long_vol: %f, short_vol: %f, long_paid: %f, short_recv: %f, trade_size: %f, market [%f %f @ %f %f]", side, long_vol, short_vol, long_paid, short_recv, trade_size, curr_bid_vol, curr_bid, curr_offer, curr_offer_vol)
+    #print("REQUEST TRADE %s : long_vol: %f, short_vol: %f, long_paid: %f, short_recv: %f, trade_size: %f, market [%f %f @ %f %f]", side, long_vol, short_vol, long_paid, short_recv, trade_size, curr_bid_vol, curr_bid, curr_offer, curr_offer_vol)
+    if long_vol != 0: 
+        long_avg_price = long_paid / long_vol 
+        print "long_avg_price: ", long_avg_price
+    if short_vol != 0: 
+        short_avg_price = short_recv / short_vol  
+        print "short_avg_price: ", short_avg_price
+
+    this_trade_pnl = 0
+
+    net_position = long_vol - short_vol
+
+    if net_position > 0:
+        price_delta = curr_bid - long_avg_price  
+        if side == "S":
+            if trade_size >= net_position:
+                assert(net_position > 0)
+                this_trade_pnl = net_position * price_delta
+            elif trade_size < net_position:
+                this_trade_pnl = trade_size * price_delta 
+        elif side == "B":
+            this_trade_pnl = 0
+
+    elif net_position < 0:
+        price_delta = short_avg_price - curr_offer
+        if side == "B":
+            if trade_size  >= abs(net_position):
+                assert(net_position < 0)
+                this_trade_pnl = abs(net_position) * price_delta
+            elif trade_size < abs(net_position):
+                this_trade_pnl = trade_size * price_delta
+        elif side == "S":
+            this_trade_pnl = 0
+
+    else:
+        assert(net_position == 0)
+    
+
+    if side == "B":
+            assert(trade_size <= curr_offer_vol)
+            long_vol += trade_size
+            long_paid += (trade_size * curr_offer) 
+    elif side == "S":
+            assert(trade_size <= curr_bid_vol)
+            short_vol += trade_size
+            short_recv += (trade_size * curr_bid)
+    else: 
+            raise RuntimeError("Invalid side: ", side)
+
+
+    # We're flat after this trade so reset everything
+    if long_vol == short_vol:
+            long_vol = short_vol = long_paid = short_recv = 0  
+    return (long_vol, short_vol, long_paid, short_recv, this_trade_pnl)
 
 # trade_size_usd = size of each trade, converted from USD to 1st currency in pair
 # signal_window_time = how long in the past to look for signals
@@ -368,6 +457,14 @@ def execute_aggressive(ts,
     
     position = 0 
     position_price = 0
+
+    net_position = 0.0
+    long_vol = 0.0
+    short_vol = 0.0
+    long_paid = 0.0
+    short_recv = 0.0
+    long_avg_price = 0.0
+    short_avg_price = 0.0
     last_trade_time = 0
     
     n = len(ts)
