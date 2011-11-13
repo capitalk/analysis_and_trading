@@ -4,11 +4,11 @@ import cloud
 
 from aws_helpers import make_s3_filenames, print_s3_hdf_files 
 from dataset_helpers import load_s3_data
-from features import features 
-from evaluation import eval_prediction, eval_all_thresholds
+import features 
+from evaluation import eval_prediction, eval_all_thresholds, eval_regression
 import signals     
 from encoder import FeatureEncoder
-from treelearn import ClassifierEnsemble,  ObliqueTree
+from treelearn import ClassifierEnsemble,  ObliqueTree, RegressionEnsemble, ClusterRegression 
 from treelearn import mk_sgd_tree, mk_svm_tree 
 from sklearn.linear_model import LogisticRegression, LinearRegression, Lasso 
 
@@ -17,9 +17,6 @@ def get_dict(dicts, key):
     else: return {}
 
 
-def loader(files, signal_fn):
-    return load_s3_data(files, features=features, signal_fn=signal_fn) 
-        
 # load each file, extract features, concat them together 
 def worker(params, features, train_files, test_files): 
     general_params = get_dict(params, 'general')
@@ -37,7 +34,7 @@ def worker(params, features, train_files, test_files):
     
     regression = general_params['regression']
     signal_fn = general_params['signal']
-    train_data, train_signal, train_times, train_bids, train_offers, currencies = loader(train_files, signal_fn)
+    train_data, train_signal, train_times, train_bids, train_offers, currencies = load_s3_data(train_files, features, signal_fn=signal_fn) 
     ntrain = train_data.shape[0] 
     if 'target' in general_params: target = general_params['target']
     else: target = None
@@ -61,7 +58,7 @@ def worker(params, features, train_files, test_files):
     
     print "Reminder, here were the params:", params 
     print "Loading testing data..."
-    test_data, test_signal, test_times, test_bids, test_offers, _ = loader(test_files, signal_fn)
+    test_data, test_signal, test_times, test_bids, test_offers, _ = load_s3_data(test_files, features, signal_fn=signal_fn) 
     
     print "Encoding test data" 
     test_data = encoder.transform(test_data, in_place=True)
@@ -77,7 +74,7 @@ def worker(params, features, train_files, test_files):
     
     if regression: 
         result = eval_regression(pred, test_signal)
-        result['cmp'] = result['mse']
+        result['cmp'] = -result['mae']
     else: 
         if target:
             test_signal = target * (test_signal == target).astype('int')
@@ -156,11 +153,14 @@ def param_search(
     possible_ensemble_params = {
         'base_model': base_models,
         'num_models': num_models, 
-        'weighting':  [0.25], 
         'stacking_model': stacking_models, 
         'verbose': [True], 
         'bagging_percent': bagging_percents,
     }
+    # classification ensembles get weighted by F-score 
+    if not regression:
+        possible_ensemble_params['weighting'] = [0.25]
+    
     all_ensembles = [
         ensemble(**params)
         for params in cartesian_product(possible_ensemble_params)
@@ -236,7 +236,7 @@ if __name__ == "__main__":
     parser.add_argument("--dict_size", dest="dict_size", nargs="*", default=[None, 50])
     parser.add_argument("--dict_type", dest="dict_type", nargs="*", default=[None, 'kmeans']), 
     parser.add_argument("--bagging_prct", dest="bagging_prct", nargs="*", default=[0.25]), 
-    
+    parser.add_argument("--use_raw_features", dest="use_raw_features", action="store_true", default=False)
     
     
     args = parser.parse_args()
@@ -259,20 +259,24 @@ if __name__ == "__main__":
         dict_sizes = [eval_if_string(s) for s in args.dict_size]
         dict_types = [parse_none(s) for s in args.dict_type]
         bagging_percents = [eval_if_string(s) for s in args.bagging_prct]
-        
+        if args.use_raw_features: 
+            feature_list = features.raw_features 
+        else: 
+            feature_list = features.five_second_features 
+            
         if args.regression: 
             ensemble = RegressionEnsemble
-            base_models = [LinearRegression()] 
-            stacking_models = [None, LinearRegression]
-            signals = signals.prct_future_midprice_change
+            base_models = [ClusterRegression(20)] 
+            stacking_models = [None, LinearRegression(fit_intercept=False)]
+            signal = signals.prct_future_midprice_change
         else:
             ensemble = ClassifierEnsemble
             base_models =[mk_sgd_tree(200000)]
-            stacking_models = [None, LogisticRegression]
+            stacking_models = [None, LogisticRegression()]
             signal = signals.bid_offer_cross
             
         param_search(
-            features, 
+            feature_list,  
             training_files, 
             testing_files, 
             debug=args.debug, 

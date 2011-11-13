@@ -5,10 +5,11 @@ import sklearn.metrics
 
 def eval_regression(y, pred): 
     result = { 
+        'mae': np.mean(np.abs(y - pred))
         'mse': sklearn.metrics.mean_square_error(y, pred), 
         'prob_same_sign': np.sum(np.sign(y) == np.sign(pred)) / float(len(y))
     }
-    return result 
+    return result
         
 
 def three_class_precision(y_test, pred): 

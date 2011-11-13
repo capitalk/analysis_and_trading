@@ -1,5 +1,5 @@
 
-features = [ 
+five_second_features = [ 
     'log offer_vol/mean/50s safe_div bid_vol/mean/50s', # log ratio of volumes 
     '(midprice/mean/5s - midprice/mean/50s) safe_div midprice/std/50s', # z-score of 5s midprice against 50s gaussian
     '(midprice/mean/1s - midprice/mean/5s) safe_div midprice/std/1s', # z-score of 1s midprice against 5s gaussian
@@ -17,4 +17,19 @@ features = [
     "clean log bid_range/mean/5s safe_div spread/mean/50s", # how many spreads wide is the verical bid range? 
     "clean log offer_range/mean/5s safe_div spread/mean/50s", # how many spreads wide is the vertical offer range? 
     't % 86400000' # t is milliseconds since midnight, divide by milliseconds in day to normalize
+]
+
+
+raw_features = [
+    'midprice/100ms', 
+    'weighted_total_price/100ms',
+    'message_count/100ms',
+    'time_since_last_message/100ms', 
+    'bid_range/100ms', 
+    'offer_range/100ms', 
+    'spread/100ms', 
+    't/100ms', 
+    't_mod_1000/100ms', 
+    'bid_vol/100ms', 
+    'offer_vol/100ms', 
 ]

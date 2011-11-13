@@ -13,6 +13,17 @@ def clean(x):
         x[outliers & (x > 0)] = top 
     return x
 
+
+def shift_right(x, amt, default=0):
+    left = [default] * amt
+    right = x[:amt] 
+    return np.concatenate([left, right])
+
+def shift_left(x, amt, default=0):
+    left = x[amt:] 
+    right = [default] * amt
+    return np.concatenate([left, right])    
+
 def diff(x):
     return np.concatenate([[0], np.diff(x)])
     
@@ -117,6 +128,8 @@ binops = {
     'select_smaller_abs': select_smaller_abs, 
     'when': when, 
     'medfilt': medfilt, 
+    'lshift': shift_left, 
+    'rshift': shift_right, 
 }
 
 
@@ -134,6 +147,7 @@ unops = {
     'mean': np.mean, 
     'abs': np.abs, 
     'clean': clean,
+    'sign': np.sign, 
     
 }
 def tokenize(s):
@@ -387,3 +401,11 @@ class Evaluator():
         tokens = tokenize(expr)
         return self.eval_token_list(tokens, start_idx=start_idx, end_idx=end_idx, env=env)
     
+
+def eval_expr(expr, env=None):
+    e = Evaluator()
+    return e.eval_expr(expr, env=env)
+
+def eval_exprs(exprs, env=None):
+    e = Evaluator()
+    return [e.eval_expr(expr, env=env) for expr in exprs]

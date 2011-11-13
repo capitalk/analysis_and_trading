@@ -4,7 +4,7 @@ import analysis
 import scipy 
 
 
-def aggressive_profit(data, max_hold_frames = 80, num_profitable_frames = 2, target_prct=0.0001, start=None, end=None):
+def aggressive_profit(data, max_hold_frames = 100, num_profitable_frames = 2, target_prct=0.0001, start=None, end=None):
     ts = data['t/100ms'][start:end]
     bids = data['bid/100ms'][start:end]
     offers = data['offer/100ms'][start:end]
@@ -14,12 +14,12 @@ def aggressive_profit(data, max_hold_frames = 80, num_profitable_frames = 2, tar
         if idx < n - max_hold_frames - 1:
             bid_window = bids[idx+1:idx+max_hold_frames+1]
             target_up = (1 + target_prct) * start_offer
-            profit_up =  np.sum(bid_window >= target_up) > num_profitable_frames 
+            profit_up =  np.sum(bid_window >= target_up) >= num_profitable_frames 
             
             start_bid = bids[idx]
             target_down = (1 - target_prct) * start_bid
             offer_window = offers[idx+1:idx+max_hold_frames + 1]
-            profit_down = np.sum(offer_window <= target_down) > num_profitable_frames
+            profit_down = np.sum(offer_window <= target_down) >= num_profitable_frames
             
             if profit_up and not profit_down:
                 signal[idx] = 1

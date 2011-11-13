@@ -4,6 +4,8 @@ from aws_helpers import *
 from expr_lang import Evaluator 
 from dataset import Dataset
 
+
+
 def dataset_to_feature_matrix(d, features): 
     ev = Evaluator() 
     ncols = len(features)
@@ -20,6 +22,13 @@ def dataset_to_feature_matrix(d, features):
         result[:, idx] = vec
     return result
 
+import signals 
+import features 
+def load_file(filename, signal = signals.prct_future_midprice_change):
+    d = Dataset(filename)
+    x = dataset_to_feature_matrix(d, features.five_second_features)
+    y = signal(d)
+    return x, y 
 
 def load_s3_data(files, features, signal_fn): 
     """Reads given filenames from s3, returns:
