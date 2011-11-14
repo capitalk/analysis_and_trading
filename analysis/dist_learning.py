@@ -124,7 +124,7 @@ def param_search(
         ensemble = ClassifierEnsemble, 
         base_models=[ClusteredClassifier(20)],
         num_models = [25], 
-        bagging_percents = [0.5], 
+        bagging_percents = [0.75], 
         dict_types = [None], # , 'kmeans'
         dict_sizes = [None], # , 50
         pca_types =  [None, 'whiten'], 
@@ -162,7 +162,7 @@ def param_search(
         'num_models': num_models, 
         'stacking_model': stacking_models, 
         'verbose': [True], 
-        'feature_subset_percent': [0.5], 
+        'feature_subset_percent': [0.75], 
         'bagging_percent': bagging_percents,
     }
     # classification ensembles get weighted by F-score 
@@ -177,7 +177,7 @@ def param_search(
     if regression:
         train_params = {}
     else: 
-        train_params = { 'class_weight': {0:1, 1:5, -1:20} }
+        train_params = { 'class_weight': {0:1, 1:5, -1:10} }
     worklist = [] 
     for smote_factor in oversampling_factors:
         general_params = {
@@ -243,7 +243,7 @@ if __name__ == "__main__":
     parser.add_argument("--regression", dest='regression', action='store_true', default=False)
     parser.add_argument("--dict_size", dest="dict_size", nargs="*", default=[None])
     parser.add_argument("--dict_type", dest="dict_type", nargs="*", default=[None]), 
-    parser.add_argument("--bagging_prct", dest="bagging_prct", nargs="*", default=[0.25]), 
+    parser.add_argument("--bagging_prct", dest="bagging_prct", nargs="*", default=[0.75]), 
     parser.add_argument("--use_raw_features", dest="use_raw_features", action="store_true", default=False)
     parser.add_argument("--start_hour", dest="start_hour", default=None, type=int)
     parser.add_argument("--end_hour", dest="end_hour", default=None, type=int)
@@ -269,6 +269,7 @@ if __name__ == "__main__":
         dict_sizes = [eval_if_string(s) for s in args.dict_size]
         dict_types = [parse_none(s) for s in args.dict_type]
         bagging_percents = [eval_if_string(s) for s in args.bagging_prct]
+        
         if args.use_raw_features: 
             feature_list = features.raw_features 
         else: 
@@ -277,12 +278,12 @@ if __name__ == "__main__":
         if args.regression: 
             ensemble = RegressionEnsemble
             base_models = [ClusteredRegression(50)] 
-            stacking_models = [None] # , LinearRegression(fit_intercept=False)
+            stacking_models = [None, LinearRegression(fit_intercept=False)] 
             signal = signals.prct_future_midprice_change
         else:
             ensemble = ClassifierEnsemble
             base_models =[ClusteredClassifier(50, base_model=LinearSVC(C=10))]
-            stacking_models = [None] # LogisticRegression()
+            stacking_models = [None, LogisticRegression(fit_intercept=False)] 
             signal = signals.bid_offer_cross
             
         param_search(

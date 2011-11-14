@@ -3,7 +3,6 @@ import numpy as np
 import analysis
 import scipy 
 
-
 def aggressive_profit(data, max_hold_frames = 100, num_profitable_frames = 2, target_prct=0.0001, start_idx=None, end_idx=None):
     ts = data['t/100ms'][start_idx:end_idx]
     bids = data['bid/100ms'][start_idx:end_idx]
@@ -31,6 +30,7 @@ def aggressive_profit(data, max_hold_frames = 100, num_profitable_frames = 2, ta
 def bid_offer_cross(data, start_idx = None, end_idx = None):
     return aggressive_profit(data, target_prct = 0.0, start_idx = start_idx, end_idx = end_idx)
 
+
 def future_change(ys, short_horizon = 3, long_horizon=50):
     n = len(ys)
     if n <= long_horizon:
@@ -50,3 +50,12 @@ def prct_future_midprice_change(data, start_idx = None, end_idx = None):
     midprice = data['midprice'][start_idx:end_idx]
     change = future_change(midprice)
     return change / midprice 
+
+
+def next_tick_change(ys):
+    return (ys[1:] - ys[:-1]) 
+
+def prct_next_tick_midprice_change(data, start_idx = None, end_idx = None): 
+    midprice = data['midprice'][start_idx:end_idx]
+    change = next_tick_change(midprice)
+    return np.concatenate([[0], change]) / midprice
