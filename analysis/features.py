@@ -28,7 +28,7 @@ raw_features = [
     'bid_range/100ms', 
     'offer_range/100ms', 
     'spread/100ms', 
-    't/100ms', 
+    't/100ms % 86400000', 
     't_mod_1000/100ms', 
     'bid_vol/100ms', 
     'offer_vol/100ms', 

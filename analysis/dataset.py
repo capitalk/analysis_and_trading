@@ -74,10 +74,6 @@ class Dataset():
         if d is not None: return d
         else: raise RuntimeError("[Dataset] Not found: " + path )
             
-    
-    
-        
-            
     def __getitem__(self, s):
         return self.get_col(s)
             

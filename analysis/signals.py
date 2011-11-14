@@ -4,10 +4,10 @@ import analysis
 import scipy 
 
 
-def aggressive_profit(data, max_hold_frames = 100, num_profitable_frames = 2, target_prct=0.0001, start=None, end=None):
-    ts = data['t/100ms'][start:end]
-    bids = data['bid/100ms'][start:end]
-    offers = data['offer/100ms'][start:end]
+def aggressive_profit(data, max_hold_frames = 100, num_profitable_frames = 2, target_prct=0.0001, start_idx=None, end_idx=None):
+    ts = data['t/100ms'][start_idx:end_idx]
+    bids = data['bid/100ms'][start_idx:end_idx]
+    offers = data['offer/100ms'][start_idx:end_idx]
     n = len(ts) 
     signal = np.zeros(n)
     for (idx, start_offer) in enumerate(offers):
@@ -28,8 +28,8 @@ def aggressive_profit(data, max_hold_frames = 100, num_profitable_frames = 2, ta
     return signal 
 
 
-def bid_offer_cross(data):
-    return aggressive_profit(data, target_prct = 0.0)
+def bid_offer_cross(data, start_idx = None, end_idx = None):
+    return aggressive_profit(data, target_prct = 0.0, start_idx = start_idx, end_idx = end_idx)
 
 def future_change(ys, short_horizon = 3, long_horizon=50):
     n = len(ys)
@@ -46,7 +46,7 @@ def future_change(ys, short_horizon = 3, long_horizon=50):
         signal[i] = future_delta 
     return np.concatenate([signal, np.zeros(long_horizon)])
 
-def prct_future_midprice_change(data):
-    midprice = data['midprice']
+def prct_future_midprice_change(data, start_idx = None, end_idx = None):
+    midprice = data['midprice'][start_idx:end_idx]
     change = future_change(midprice)
     return change / midprice 

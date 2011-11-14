@@ -12,7 +12,8 @@ from treelearn import ClassifierEnsemble, RegressionEnsemble
 from treelearn import ClusteredRegression, ClusteredClassifier
 from treelearn import ObliqueTree
 from treelearn import mk_sgd_tree, mk_svm_tree 
-from sklearn.linear_model import LogisticRegression, LinearRegression, Lasso 
+from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.svm import LinearSVC 
 
 def get_dict(dicts, key):
     if key in dicts: return dicts[key]
@@ -20,7 +21,7 @@ def get_dict(dicts, key):
 
 
 # load each file, extract features, concat them together 
-def worker(params, features, train_files, test_files): 
+def worker(params, features, train_files, test_files, start_hour, end_hour): 
     general_params = get_dict(params, 'general')
     train_params  = get_dict(params, 'training')
     encoder = params['encoder']
@@ -36,14 +37,15 @@ def worker(params, features, train_files, test_files):
     
     regression = general_params['regression']
     signal_fn = general_params['signal']
-    train_data, train_signal, train_times, train_bids, train_offers, currencies = load_s3_data(train_files, features, signal_fn=signal_fn) 
+    train_data, train_signal, train_times, train_bids, train_offers, ccys = \
+        load_s3_data(train_files, features, signal_fn=signal_fn, start_hour = start_hour, end_hour = end_hour) 
     ntrain = train_data.shape[0] 
     if 'target' in general_params: target = general_params['target']
     else: target = None
     if target: train_signal = (train_signal == target).astype('int')
             
     # assume all files from same currency pair 
-    ccy = currencies[0]
+    ccy = ccys[0]
     
     print "Encoding training data..." 
     train_data = encoder.fit_transform(train_data)
@@ -60,7 +62,8 @@ def worker(params, features, train_files, test_files):
     
     print "Reminder, here were the params:", params 
     print "Loading testing data..."
-    test_data, test_signal, test_times, test_bids, test_offers, _ = load_s3_data(test_files, features, signal_fn=signal_fn) 
+    test_data, test_signal, test_times, test_bids, test_offers, _ = \
+        load_s3_data(test_files, features, signal_fn=signal_fn, start_hour = start_hour, end_hour = end_hour) 
     
     print "Encoding test data" 
     test_data = encoder.transform(test_data, in_place=True)
@@ -119,21 +122,23 @@ def param_search(
         regression = False, 
         signal = signals.bid_offer_cross, 
         ensemble = ClassifierEnsemble, 
-        base_models=[mk_sgd_tree(20000)],
-        num_models = [50], 
-        bagging_percents = [0.25], 
-        dict_types = [None, 'kmeans'], 
-        dict_sizes = [None, 50], 
+        base_models=[ClusteredClassifier(20)],
+        num_models = [25], 
+        bagging_percents = [0.5], 
+        dict_types = [None], # , 'kmeans'
+        dict_sizes = [None], # , 50
         pca_types =  [None, 'whiten'], 
         compute_pairwise_products = [False], 
         binning = [False], 
-        stacking_models = [None, LogisticRegression()]):
+        stacking_models = [None, LogisticRegression()], 
+        start_hour = None, 
+        end_hour = None):
     print "Features:", features 
     print "Training files:", train_files
     print "Testing files:", test_files 
     
     def do_work(p): 
-        return worker(p, features, train_files, test_files)
+        return worker(p, features, train_files, test_files, start_hour, end_hour)
 
     oversampling_factors = [0]    
 
@@ -157,7 +162,7 @@ def param_search(
         'num_models': num_models, 
         'stacking_model': stacking_models, 
         'verbose': [True], 
-        'feature_subset_percent': [0.5, 0.75], 
+        'feature_subset_percent': [0.5], 
         'bagging_percent': bagging_percents,
     }
     # classification ensembles get weighted by F-score 
@@ -172,7 +177,7 @@ def param_search(
     if regression:
         train_params = {}
     else: 
-        train_params = { 'class_weight': {0:1, 1:10, -1:10} }
+        train_params = { 'class_weight': {0:1, 1:5, -1:20} }
     worklist = [] 
     for smote_factor in oversampling_factors:
         general_params = {
@@ -236,10 +241,12 @@ if __name__ == "__main__":
     
     
     parser.add_argument("--regression", dest='regression', action='store_true', default=False)
-    parser.add_argument("--dict_size", dest="dict_size", nargs="*", default=[None, 50])
-    parser.add_argument("--dict_type", dest="dict_type", nargs="*", default=[None, 'kmeans']), 
+    parser.add_argument("--dict_size", dest="dict_size", nargs="*", default=[None])
+    parser.add_argument("--dict_type", dest="dict_type", nargs="*", default=[None]), 
     parser.add_argument("--bagging_prct", dest="bagging_prct", nargs="*", default=[0.25]), 
     parser.add_argument("--use_raw_features", dest="use_raw_features", action="store_true", default=False)
+    parser.add_argument("--start_hour", dest="start_hour", default=None, type=int)
+    parser.add_argument("--end_hour", dest="end_hour", default=None, type=int)
     
     
     args = parser.parse_args()
@@ -269,13 +276,13 @@ if __name__ == "__main__":
             
         if args.regression: 
             ensemble = RegressionEnsemble
-            base_models = [ClusteredRegression(20)] 
-            stacking_models = [None, LinearRegression(fit_intercept=False)]
+            base_models = [ClusteredRegression(50)] 
+            stacking_models = [None] # , LinearRegression(fit_intercept=False)
             signal = signals.prct_future_midprice_change
         else:
             ensemble = ClassifierEnsemble
-            base_models =[ClusteredClassifier(20)]
-            stacking_models = [None, LogisticRegression()]
+            base_models =[ClusteredClassifier(50, base_model=LinearSVC(C=10))]
+            stacking_models = [None] # LogisticRegression()
             signal = signals.bid_offer_cross
             
         param_search(
@@ -289,6 +296,8 @@ if __name__ == "__main__":
             base_models = base_models, 
             bagging_percents = bagging_percents, 
             dict_types = dict_types, 
-            dict_sizes = dict_sizes)
+            dict_sizes = dict_sizes, 
+            start_hour = args.start_hour, 
+            end_hour = args.end_hour)
             
     

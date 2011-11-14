@@ -57,6 +57,10 @@ def print_s3_hdf_files():
     print "\n".join(filenames )
 
 def make_s3_filenames(ecn, ccy, dates): 
+    assert ecn is not None
+    assert ccy is not None 
+    assert dates is not None and len(dates) > 0 
+    
     ecn = ecn.upper()
     ccy = ccy.upper().replace('/', '') 
     dates = [d.replace('/', '_') for d in dates]

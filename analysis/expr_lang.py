@@ -402,10 +402,10 @@ class Evaluator():
         return self.eval_token_list(tokens, start_idx=start_idx, end_idx=end_idx, env=env)
     
 
-def eval_expr(expr, env=None):
+def eval_expr(expr, env=None, start_idx=None, end_idx=None):
     e = Evaluator()
-    return e.eval_expr(expr, env=env)
+    return e.eval_expr(expr, env=env, start_idx=start_idx, end_idx=end_idx)
 
-def eval_exprs(exprs, env=None):
+def eval_exprs(exprs, env=None, start_idx=None, end_idx=None):
     e = Evaluator()
-    return [e.eval_expr(expr, env=env) for expr in exprs]
+    return [e.eval_expr(expr, env=env, start_idx=start_idx, end_idx=end_idx) for expr in exprs]
