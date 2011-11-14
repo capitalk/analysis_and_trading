@@ -8,7 +8,9 @@ import features
 from evaluation import eval_prediction, eval_all_thresholds, eval_regression
 import signals     
 from encoder import FeatureEncoder
-from treelearn import ClassifierEnsemble,  ObliqueTree, RegressionEnsemble, ClusterRegression 
+from treelearn import ClassifierEnsemble, RegressionEnsemble 
+from treelearn import ClusteredRegression, ClusteredClassifier
+from treelearn import ObliqueTree
 from treelearn import mk_sgd_tree, mk_svm_tree 
 from sklearn.linear_model import LogisticRegression, LinearRegression, Lasso 
 
@@ -155,6 +157,7 @@ def param_search(
         'num_models': num_models, 
         'stacking_model': stacking_models, 
         'verbose': [True], 
+        'feature_subset_percent': [0.5, 0.75], 
         'bagging_percent': bagging_percents,
     }
     # classification ensembles get weighted by F-score 
@@ -266,12 +269,12 @@ if __name__ == "__main__":
             
         if args.regression: 
             ensemble = RegressionEnsemble
-            base_models = [ClusterRegression(20)] 
+            base_models = [ClusteredRegression(20)] 
             stacking_models = [None, LinearRegression(fit_intercept=False)]
             signal = signals.prct_future_midprice_change
         else:
             ensemble = ClassifierEnsemble
-            base_models =[mk_sgd_tree(200000)]
+            base_models =[ClusteredClassifier(20)]
             stacking_models = [None, LogisticRegression()]
             signal = signals.bid_offer_cross
             
