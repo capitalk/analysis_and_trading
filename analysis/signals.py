@@ -55,12 +55,21 @@ def prct_future_midprice_change(data, start_idx = None, end_idx = None):
 def delta(ys):
     return ys[1:] - ys[:-1]
 
+def next_tick_midprice_change(data, start_idx = None, end_idx = None): 
+    midprice = data['midprice'][start_idx:end_idx]
+    change = delta(midprice)
+    return np.concatenate([change, [0]])
+
 def prct_next_tick_midprice_change(data, start_idx = None, end_idx = None): 
     midprice = data['midprice'][start_idx:end_idx]
     change = delta(midprice)
     return np.concatenate([change, [0]]) / midprice
     
-
+def curr_tick_midprice_change(data, start_idx = None, end_idx = None): 
+    midprice = data['midprice'][start_idx:end_idx]
+    change = delta(midprice)
+    return np.concatenate([[0], change])
+    
 def prct_curr_tick_midprice_change(data, start_idx = None, end_idx = None): 
     midprice = data['midprice'][start_idx:end_idx]
     change = delta(midprice)
