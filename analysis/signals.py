@@ -1,6 +1,7 @@
 import math 
 import numpy as np
 import analysis
+from analysis import padded_delta
 import scipy 
 
 def aggressive_profit(data, max_hold_frames = 100, num_profitable_frames = 2, target_prct=0.0001, start_idx=None, end_idx=None):
@@ -52,25 +53,19 @@ def prct_future_midprice_change(data, start_idx = None, end_idx = None):
     return change / midprice 
 
 
-def delta(ys):
-    return ys[1:] - ys[:-1]
-
 def next_tick_midprice_change(data, start_idx = None, end_idx = None): 
     midprice = data['midprice'][start_idx:end_idx]
-    change = delta(midprice)
-    return np.concatenate([change, [0]])
-
+    return padded_delta(midprice, side='right')
+    
 def prct_next_tick_midprice_change(data, start_idx = None, end_idx = None): 
     midprice = data['midprice'][start_idx:end_idx]
-    change = delta(midprice)
-    return np.concatenate([change, [0]]) / midprice
+    return padded_delta(midprice, side='right', prct=True)
     
 def curr_tick_midprice_change(data, start_idx = None, end_idx = None): 
     midprice = data['midprice'][start_idx:end_idx]
-    change = delta(midprice)
-    return np.concatenate([[0], change])
+    return padded_delta(midprice, side='left')
     
 def prct_curr_tick_midprice_change(data, start_idx = None, end_idx = None): 
     midprice = data['midprice'][start_idx:end_idx]
-    change = delta(midprice)
-    return np.concatenate([[0], change]) / midprice
+    return padded_delta(midprice, side='left', prct=True)
+    

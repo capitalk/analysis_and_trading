@@ -1,4 +1,5 @@
 import numpy as np 
+import glob 
 from array_helpers import check_data 
 from aws_helpers import * 
 from expr_lang import Evaluator 
@@ -39,8 +40,57 @@ def load_file(filename, feature_list = features.five_second_features, signal = s
         x = dataset_to_feature_matrix(d, feature_list, start_idx=start_idx, end_idx=end_idx)
     else:
         x = None 
-    y = signal(d, start_idx = start_idx, end_idx = end_idx)
+        
+    if signal:
+        y = signal(d, start_idx = start_idx, end_idx = end_idx)
+    else:
+        y = None
+        
     return x, y 
+
+# for some reason the builtin numpy hstack seems to freeze
+# or take a very long time, so wrote my own 
+def hstack(arrays):
+    if len(arrays) == 0: return np.empty([0])
+    else:
+        arrays = map(np.atleast_1d, arrays)
+        dtype = arrays[0].dtype
+        n_rows = arrays[0].shape[0]
+        shapes = [array.shape for array in arrays]
+        col_sizes = [s[1] if len(array.shape) > 1 else 1 for s in shapes]
+        total_cols = sum(col_sizes)
+        result = np.zeros([n_rows, total_cols], dtype=dtype, order='F')
+        col_idx = 0 
+        for array in arrays:
+            
+            assert array.shape[0] == n_rows 
+            if len(array.shape) < 2:
+                array = np.atleast_2d(array).T
+            n_cols = array.shape[1]
+            result[:, col_idx:col_idx + n_cols] = array
+            col_idx += n_cols
+        return result
+            
+
+def load_files(path, feature_list = ['midprice'], signal = None, start_hour = None, end_hour = None):
+    files = glob.glob(path)
+    xs = []
+    ys = []
+    for filename in files:
+        print "Loading", filename 
+        x, y = load_file(
+            filename, 
+            feature_list = feature_list, 
+            signal = signal, 
+            start_hour = start_hour, 
+            end_hour = end_hour) 
+        if x is not None: xs.append(x) 
+        if y is not None: ys.append(y)
+    print "Concatentating", len(xs), "data matrices"
+    x = hstack(xs)
+    print "Concatentating", len(ys), "signal vectors"
+    y = hstack(ys)
+    return x, y, files 
 
 def load_s3_data(files, features, signal_fn, start_hour=None, end_hour=None): 
     """Reads given filenames from s3, returns:

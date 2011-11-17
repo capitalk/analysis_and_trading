@@ -8,7 +8,32 @@ import scipy.stats
 from array_helpers import * 
 from dataset_helpers import * 
 
+def delta(ys, lag=1):
+    
+    if np.rank(ys) == 2:
+        return ys[lag:, :] - ys[:-lag, :]
+    else:
+        return ys[lag:] - ys[:-lag]
 
+
+def padded_delta(ys, lag=1, side='left', prct=False):
+    ds = delta(ys, lag)
+    if prct:
+        ds /= ys[:-lag]
+    result = np.zeros_like(ys)
+    r = np.rank(ys)
+    if side=='left' and r == 2:
+        result[lag:, :] = ds
+    elif side == 'left' and r == 1:
+        result[lag:] = ds 
+    elif side == 'right' and r == 2: 
+        result[:-lag, :] = ds
+    elif side == 'right' and r == 1:
+        result[:-lag] = ds 
+    else:
+        assert False
+    return  result 
+    
 def counts_to_probs(xs):
     xs = np.atleast_2d(xs)
     nrows, ncols = xs.shape 
