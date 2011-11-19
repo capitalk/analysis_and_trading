@@ -8,6 +8,17 @@ import scipy.stats
 from array_helpers import * 
 from dataset_helpers import * 
 
+def windowed_std(xs, lag=10): 
+    xs = np.atleast_1d(xs)
+    results = np.zeros_like(xs)
+    n = xs.shape[0] 
+    ends = np.arange(n-lag) + lag 
+    for i in xrange(n - lag):
+        j = ends[i]
+        window = xs[i:j]
+        results[j] = np.std(window)
+    return results 
+    
 def windowed_variance(xs, lag=10):
     xs = np.atleast_1d(xs)
     results = np.zeros_like(xs)

@@ -140,6 +140,9 @@ def ccy_value_hmean(rate_matrix_series):
     """
     return scipy.stats.mstats.hmean(rate_matrix_series, axis=1)
     
+def foreach_matrix(f, ms):
+    """Apply function f to each 2D matrix, iterating over 3rd dim"""
+    return np.array([f(ms[:, :, i]) for i in xrange(ms.shape[2])])
 
 def abs_first_eigenvector(x):
     _, V = np.linalg.eig(x)
@@ -151,27 +154,29 @@ def ccy_value_eig (rate_matrix_series):
     and t is the number of timesteps. 
     return the scaled singular vector for each timestep
     """
-    n_timesteps = rate_matrix_series.shape[2]
-    ts = xrange(n_timesteps)
-    return np.array([abs_first_eigenvector(rate_matrix_series[:, :, i]) for i in ts])
-
+    return foreach_matrix(abs_first_eigenvector, rate_matrix_series)
+    
 def normalized_first_singular_vector(x):
      U,_, _ = np.linalg.svd(x)
      u0 = U[:, 0]
      return  u0 / np.sum(u0)
      
 def ccy_value_svd(rate_matrix_series):
-    n_timesteps = rate_matrix_series.shape[2]
-    ts = xrange(n_timesteps)
-    return np.array([normalized_first_singular_vector(rate_matrix_series[:, :, i]) for i in ts])
-
+    return foreach_matrix(normalized_first_singular_vector, rate_matrix_series)
+    
 
 def percent_max_eigenvalue(rate_matrix):
     eigs = np.abs(np.linalg.eigvals(rate_matrix))
     return np.max(eigs) / np.sum(eigs)
 
-
 def percent_max_eigenvalues(rate_matrix_series):
-    n = rate_matrix_series.shape[2]
-    return np.array([percent_max_eigenvalue(rate_matrix_series[:, :, i]) for i in xrange(n) ])
+    return foreach_matrix(percent_max_eigenvalue, rate_matrix_series)
     
+def inconsistency(m):
+    m_squared = np.dot(m,m)
+    diff = m_squared - m.shape[0]*m
+    eigs = np.linalg.eigvals(diff)
+    return np.mean(np.abs(eigs))
+
+def inconsistencies(rate_matrix_series):
+    return foreach_matrix(inconsistency, rate_matrix_series)
