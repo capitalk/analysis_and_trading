@@ -8,8 +8,17 @@ import scipy.stats
 from array_helpers import * 
 from dataset_helpers import * 
 
-def delta(ys, lag=1):
+def windowed_variance(xs, lag=10):
+    xs = np.atleast_1d(xs)
+    results = np.zeros_like(xs)
+    n = xs.shape[0] 
+    for i in xrange(n - lag):
+        j = i+lag
+        window = xs[i:j]
+        results[j] = np.var(window)
+    return results 
     
+def delta(ys, lag=1):
     if np.rank(ys) == 2:
         return ys[lag:, :] - ys[:-lag, :]
     else:

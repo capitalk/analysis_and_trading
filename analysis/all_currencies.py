@@ -64,6 +64,114 @@ def best_regression_lags(x, min_lag = 3,
                         }
     return best 
             
-            
+
+
+def powerset(seq):
+    if isinstance(seq, set):
+        seq = list(seq)
+    """
+    Returns all the subsets of this set. This is a generator.
+    """
+    if len(seq) <= 1:
+        yield seq
+        yield []
+    else:
+        for item in powerset(seq[1:]):
+            yield [seq[0]]+item
+            yield item
+
+
+def pairs(xs):
+    return [ (x,y) for x in xs for y in xs]
     
+def maximum_clique(unique_names, rates):
+    best_subset = []
+    for subset in powerset(unique_names):
+        if len(subset) > len(best_subset):
+            good = True 
+            for (ccy_a, ccy_b) in pairs(subset):
+                if ccy_a != ccy_b and (ccy_a, ccy_b) not in rates:
+                    good = False
+                    break
+            if good:
+                best_subset = subset 
+    return best_subset 
+            
+import glob
+from dataset import Dataset 
+from dataset_helpers import hour_to_idx
+
+def pairwise_rates_from_path(path, start_hour=18, end_hour=20):
+    currencies = set([])
+    rates = {}
+    nticks = None
+    for filename in glob.glob(path):
+        d = Dataset(filename)
+        start_idx = hour_to_idx(d.t, start_hour)
+        end_idx = hour_to_idx(d.t, end_hour)
+        nticks = end_idx - start_idx 
+        bids = d['bid'][start_idx:end_idx]
+        offers = d['offer'] [start_idx:end_idx]
+        ccy_a, ccy_b = d.currency_pair
+        currencies.add(ccy_a)
+        currencies.add(ccy_b)
+        rates[ (ccy_a, ccy_b) ] = bids 
+        rates[ (ccy_b, ccy_a) ] = 1.0 / offers
+
+    clique = list(maximum_clique(currencies, rates))
+    n = len(clique)
+    clique_rates = np.zeros( [n,n, nticks], dtype='float')
+    for i in xrange(n):
+        ccy_a = clique[i] 
+        for j in xrange(n):
+            if i == j:
+                clique_rates[i,j,:] = 1.0
+            else: 
+                ccy_b = clique[j]
+                clique_rates[i,j, :] = rates[ (ccy_a, ccy_b) ] 
+    return clique, clique_rates, currencies, rates 
+
+import scipy.stats 
+def ccy_value_hmean(rate_matrix_series):
+    """
+    input = k * k * t array, where k is the number of currencies and 
+    t is the number of timesteps, return the harmonic mean of each row
+    per each timestep
+    """
+    return scipy.stats.mstats.hmean(rate_matrix_series, axis=1)
+    
+
+def abs_first_eigenvector(x):
+    _, V = np.linalg.eig(x)
+    return np.abs(V[:, 0]) # abs since it might be scaled by an imaginary number 
+    
+def ccy_value_eig (rate_matrix_series):
+    """
+    input = k * k * t array where k is the number of currencies
+    and t is the number of timesteps. 
+    return the scaled singular vector for each timestep
+    """
+    n_timesteps = rate_matrix_series.shape[2]
+    ts = xrange(n_timesteps)
+    return np.array([abs_first_eigenvector(rate_matrix_series[:, :, i]) for i in ts])
+
+def normalized_first_singular_vector(x):
+     U,_, _ = np.linalg.svd(x)
+     u0 = U[:, 0]
+     return  u0 / np.sum(u0)
+     
+def ccy_value_svd(rate_matrix_series):
+    n_timesteps = rate_matrix_series.shape[2]
+    ts = xrange(n_timesteps)
+    return np.array([normalized_first_singular_vector(rate_matrix_series[:, :, i]) for i in ts])
+
+
+def percent_max_eigenvalue(rate_matrix):
+    eigs = np.abs(np.linalg.eigvals(rate_matrix))
+    return np.max(eigs) / np.sum(eigs)
+
+
+def percent_max_eigenvalues(rate_matrix_series):
+    n = rate_matrix_series.shape[2]
+    return np.array([percent_max_eigenvalue(rate_matrix_series[:, :, i]) for i in xrange(n) ])
     
