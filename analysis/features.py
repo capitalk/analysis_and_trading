@@ -1,4 +1,6 @@
 
+
+
 five_second_features = [ 
     'log offer_vol/mean/50s safe_div bid_vol/mean/50s', # log ratio of volumes 
     '(midprice/mean/5s - midprice/mean/50s) safe_div midprice/std/50s', # z-score of 5s midprice against 50s gaussian

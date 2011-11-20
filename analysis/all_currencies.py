@@ -180,3 +180,21 @@ def inconsistency(m):
 
 def inconsistencies(rate_matrix_series):
     return foreach_matrix(inconsistency, rate_matrix_series)
+
+def make_ideal_rate_matrix(values):
+    n = values.shape[0]
+    mat = np.zeros([n,n] )
+    for i in xrange(n):
+        for j in xrange(n):
+            mat[i,j] = values[i] / values[j]
+    return mat 
+
+def make_ideal_rate_series(value_series):
+    """give a time series of value vectors, 
+        create idealized (noise-free) rate matrices"""
+    n_ccy, n_timesteps = value_series.shape
+    result = np.zeros( [n_ccy, n_ccy, n_timesteps])
+    for i in xrange(n_ccy):
+        for j in xrange(n_ccy):
+            result[i, j, :] = value_series[i, :] / value_series[j, :] 
+    return result 

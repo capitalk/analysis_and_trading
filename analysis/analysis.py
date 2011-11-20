@@ -8,6 +8,28 @@ import scipy.stats
 from array_helpers import * 
 from dataset_helpers import * 
 
+def multiscale_gradient(xs, n_scales=4, base=4):
+    xs = np.array(xs, dtype='float')
+    n = xs.shape[0]
+    result = np.zeros( [n_scales, n] )
+    window_sizes = base**np.arange(n_scales)
+    csum = np.cumsum(xs)
+    js = range(n_scales)
+    for j, wsize in enumerate(window_sizes):
+        start_offset = 2*wsize
+        midpoints = csum[wsize:-wsize]
+        first_vals = csum[0:-2*wsize]
+        last_vals = csum[2*wsize:]
+        old_sums = midpoints - first_vals 
+        new_sums = last_vals - midpoints 
+        result[j, start_offset:] = new_sums - old_sums 
+    # to turn a difference of sums into a difference of averages, 
+    # divide out the window sizes
+    for j, wsize in enumerate(window_sizes):
+        result[j, :] /= wsize 
+    return result 
+    
+    
 def windowed_std(xs, lag=10): 
     xs = np.atleast_1d(xs)
     results = np.zeros_like(xs)
