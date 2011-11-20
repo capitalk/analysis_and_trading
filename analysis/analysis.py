@@ -8,6 +8,23 @@ import scipy.stats
 from array_helpers import * 
 from dataset_helpers import * 
 
+def multiscale_smoothing(xs, n_scales=4, base=4):
+    xs = np.array(xs, dtype='float')
+    n = xs.shape[0]
+    result = np.zeros( [n_scales, n] )
+    window_sizes = base**np.arange(n_scales)
+    csum = np.cumsum(xs)
+    js = range(n_scales)
+    for j, wsize in enumerate(window_sizes):
+        first_vals = csum[:-wsize]
+        last_vals = csum[wsize:]
+        result[j, wsize:] = last_vals - first_vals 
+    # to turn a difference of sums into a difference of averages, 
+    # divide out the window sizes
+    for j, wsize in enumerate(window_sizes):
+        result[j, :] /= wsize 
+    return result 
+
 def multiscale_gradient(xs, n_scales=4, base=4):
     xs = np.array(xs, dtype='float')
     n = xs.shape[0]
