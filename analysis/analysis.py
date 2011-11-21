@@ -7,11 +7,6 @@ import scipy.stats
 
 from array_helpers import * 
 from dataset_helpers import * 
-
-
-
-
-
     
 def counts_to_probs(xs):
     xs = np.atleast_2d(xs)

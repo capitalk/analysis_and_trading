@@ -101,7 +101,7 @@ import glob
 from dataset import Dataset 
 from dataset_helpers import hour_to_idx
 
-def pairwise_rates_from_path(path, start_hour=18, end_hour=20):
+def pairwise_rates_from_path(path, start_hour=12, end_hour=22):
     currencies = set([])
     rates = {}
     nticks = None
@@ -208,3 +208,38 @@ def difference_from_ideal_rate(rates, values):
             midprice = 0.5*rates[i,j, :] + 0.5 / rates[j, i, :]
             differences[i,j,:] = midprice - ideal_rates[i,j, :]
     return differences 
+
+
+
+def load_pairwise_features_from_path(path, signal = signals.bid_offer_cross, start_hour=12, end_hour=22):
+    
+    clique, clique_rates, _, _ = pairwise_rates_from_path(path, start_hour, end_hour)
+    clique_size = len(clique)
+    ccy_values = ccy_value_eig(clique_rates)
+    diff_from_ideal = difference_from_ideal_rate(ccy_values)
+    
+    
+    start_idx = hour_to_idx(d.t, start_hour)
+    end_idx = hour_to_idx(d.t, end_hour)
+    n_ticks = end_idx - start_idx 
+    
+    
+    signals = {}
+    for filename in glob.glob(path):
+        d = Dataset(filename)
+        ccy_a, ccy_b = d.currency_pair 
+        if ccy_a in clique and ccy_b in clique:
+            signals[d.currency_pair] = signal(d, start_idx = start_idx, end_idx = end_idx) 
+    
+    n_scales = 4
+    n_pairs = (clique_size-1) * (clique_size-2)
+    n_features = n_scales * (clique_size + n_pairs*2)
+    features = np.zeros( [n_features, n_ticks], dtype='float')
+    # add currency value gradients to features 
+    for i in xrange(clique_size):
+        features[i*n_scales : (i+1)*n_scales, :] = filter.multiscale_exponential_gradients(ccy_values[i, :], scale=scale)
+    
+            
+        
+        
+        

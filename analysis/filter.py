@@ -25,6 +25,8 @@ def multiscale_exponential_smoothing(xs, n_scales = 4, base = 4):
         smoothed[i, :] = exponential_smoothing(xs, alpha)
     return smoothed
 
+
+
 def simple_smoothing(xs, scale):
     csum = np.cumsum(xs)
     result = np.zeros_like(xs)
@@ -74,20 +76,25 @@ def padded_delta(ys, lag=1, side='left', prct=False):
     return  result 
 
 def simple_multiscale_gradients(xs, n_scales=4, base=4):
-    dx = padded_delta(xs, lag=1)
-    gradients = np.zeros([n_scales, dx.shape[0]], dtype='float')
+    xs = np.asarray(xs, dtype='float')
+    gradients = np.zeros([n_scales, xs.shape[0]], dtype='float')
     for i in xrange(n_scales):
-        gradients[i, :] = simple_smoothing(dx, base ** i)
+        scale = base ** i 
+        smoothed = simple_smoothing(xs, scale)
+        gradients[i, scale:] = smoothed[scale:] - smoothed[:-scale]
     return gradients 
     
-def exponential_multiscale_gradients(xs, n_scales=4, base=4): 
-    dx = padded_delta(xs, lag=1)
-    gradients = np.zeros([n_scales, dx.shape[0]], dtype='float')
+
+
+def multiscale_exponential_gradients(xs, n_scales=4, base=4): 
+    xs = np.asarray(xs, dtype='float')
+    gradients = np.zeros([n_scales, xs.shape[0]], dtype='float')
     for i in xrange(n_scales):
         scale = base ** i
         alpha = 1.0 / scale
-        gradients[i, :] = exponential_smoothing(dx, alpha=alpha)
-    return gradients 
+        smoothed = exponential_smoothing(xs, alpha)
+        gradients[i, scale:] = scale * (smoothed[scale:] - smoothed[:-scale])
+    return gradients
         
 def windowed_std(xs, lag=10): 
     xs = np.atleast_1d(xs)

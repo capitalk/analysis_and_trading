@@ -35,7 +35,7 @@ import signals
 import features 
 def load_file(filename, feature_list = features.five_second_features, signal = signals.prct_future_midprice_change, start_hour=None, end_hour=None):
     d = Dataset(filename)
-    start_idx = None if start_hour is None else hour_to_idx(d.t, start_hour) 
+    start_idx = None if start_hour is None else hour_to_idx(d.t, start_hour)
     end_idx = None if end_hour is None else hour_to_idx(d.t, end_hour)
     
     if feature_list:
@@ -94,6 +94,8 @@ def load_files(path, feature_list = ['midprice'], signal = None, start_hour = No
     print "Concatentating", len(ys), "signal vectors"
     y = hstack(ys)
     return x, y, files 
+
+
 
 def load_s3_data(files, features, signal_fn, start_hour=None, end_hour=None): 
     """Reads given filenames from s3, returns:
