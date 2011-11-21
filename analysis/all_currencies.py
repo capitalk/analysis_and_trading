@@ -198,3 +198,13 @@ def make_ideal_rate_series(value_series):
         for j in xrange(n_ccy):
             result[i, j, :] = value_series[i, :] / value_series[j, :] 
     return result 
+
+def difference_from_ideal_rate(rates, values):
+    ideal_rates = make_ideal_rate_series(values)
+    differences = np.zeros_like(rates)
+    n = rates.shape[0]
+    for i in xrange(n):
+        for j in xrange(n):
+            midprice = 0.5*rates[i,j, :] + 0.5 / rates[j, i, :]
+            differences[i,j,:] = midprice - ideal_rates[i,j, :]
+    return differences 
