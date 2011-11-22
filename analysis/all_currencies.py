@@ -2,6 +2,9 @@
 import numpy as np 
 from treelearn import ClusteredRegression
 from sklearn.linear_model import LinearRegression    
+import filter 
+import features 
+import signals 
 
 def best_regression_lags(x, min_lag = 3, 
                             n_lags = 10,
@@ -101,17 +104,19 @@ import glob
 from dataset import Dataset 
 from dataset_helpers import hour_to_idx
 
-def pairwise_rates_from_path(path, start_hour=12, end_hour=22):
+def load_pairwise_rates_from_path(path, start_hour=12, end_hour=22):
     currencies = set([])
     rates = {}
     nticks = None
-    for filename in glob.glob(path):
+    all_files = glob.glob(path)
+    assert len(all_files) > 0
+    for filename in all_files:
         d = Dataset(filename)
         start_idx = hour_to_idx(d.t, start_hour)
         end_idx = hour_to_idx(d.t, end_hour)
         nticks = end_idx - start_idx 
-        bids = d['bid'][start_idx:end_idx]
-        offers = d['offer'] [start_idx:end_idx]
+        bids = d['bid/100ms'][start_idx:end_idx]
+        offers = d['offer/100ms'] [start_idx:end_idx]
         ccy_a, ccy_b = d.currency_pair
         currencies.add(ccy_a)
         currencies.add(ccy_b)
@@ -142,7 +147,7 @@ def ccy_value_hmean(rate_matrix_series):
     
 def foreach_matrix(f, ms):
     """Apply function f to each 2D matrix, iterating over 3rd dim"""
-    return np.array([f(ms[:, :, i]) for i in xrange(ms.shape[2])])
+    return np.array([f(ms[:, :, i]) for i in xrange(ms.shape[2])]).T
 
 def abs_first_eigenvector(x):
     _, V = np.linalg.eig(x)
@@ -213,32 +218,93 @@ def difference_from_ideal_rate(rates, values):
 
 def load_pairwise_features_from_path(path, signal = signals.bid_offer_cross, start_hour=12, end_hour=22):
     
-    clique, clique_rates, _, _ = pairwise_rates_from_path(path, start_hour, end_hour)
+    print "Searching for maximum clique"
+    clique, clique_rates, _, _ = load_pairwise_rates_from_path(path, start_hour, end_hour)
+    
     clique_size = len(clique)
+    print "Found clique of size", clique_size, ":",  clique 
+    
+    n_scales = 4
+    n_pair_features = 3 
+    n_pairs = (clique_size-1) * (clique_size-2)
+    n_features = n_scales * (clique_size + n_pairs * n_pair_features)
+    print "Computing", n_features, "features for", n_pairs, "currency pairs over", n_scales, "time scales"
+    feature_list = []
+    multiscale_feature_list = [] 
+    
+    # add currency value gradients to features 
+    print "Computing currency values from principal eigenvectors of rate matrices (with shape", clique_rates.shape, ")"
     ccy_values = ccy_value_eig(clique_rates)
-    diff_from_ideal = difference_from_ideal_rate(ccy_values)
+    
+    for i in xrange(clique_size):       
+        gradients = filter.multiscale_exponential_gradients(ccy_values[i, :], n_scales = n_scales)
+        feature_list.append(gradients[0, :])
+        for scale in xrange(n_scales):
+            multiscale_feature_list.append(gradients[scale, :])
+    
+    # compute difference from ideal rates 
+    pair_counter = 0
+    for i in xrange(clique_size):
+        for j in np.arange(clique_size-i-1)+i+1:
+            ideal_midprice = ccy_values[i, :] / ccy_values[j, :]
+            midprice = 0.5*clique_rates[i,j,:] + 0.5/clique_rates[j,i,:]
+
+            diff = midprice - ideal_midprice
+            feature_list.append(diff)
+            smoothed = filter.multiscale_exponential_smoothing(diff, n_scales = n_scales)
+            for scale in xrange(n_scales):
+                multiscale_feature_list.append(smoothed[scale, :])
+            
     
     
-    start_idx = hour_to_idx(d.t, start_hour)
-    end_idx = hour_to_idx(d.t, end_hour)
-    n_ticks = end_idx - start_idx 
-    
-    
-    signals = {}
+    signals = []
     for filename in glob.glob(path):
         d = Dataset(filename)
         ccy_a, ccy_b = d.currency_pair 
         if ccy_a in clique and ccy_b in clique:
-            signals[d.currency_pair] = signal(d, start_idx = start_idx, end_idx = end_idx) 
-    
-    n_scales = 4
-    n_pairs = (clique_size-1) * (clique_size-2)
-    n_features = n_scales * (clique_size + n_pairs*2)
-    features = np.zeros( [n_features, n_ticks], dtype='float')
-    # add currency value gradients to features 
-    for i in xrange(clique_size):
-        features[i*n_scales : (i+1)*n_scales, :] = filter.multiscale_exponential_gradients(ccy_values[i, :], scale=scale)
-    
+            start_idx = hour_to_idx(d.t, start_hour)
+            end_idx = hour_to_idx(d.t, end_hour)
+            
+            print 
+            print "Getting features for", d.currency_pair 
+            print 
+            print "Bid side slope"
+            bss = features.bid_side_slope(d, start_idx, end_idx)
+            feature_list.append(bss)
+            smoothed = filter.multiscale_exponential_smoothing(bss, n_scales = n_scales)
+            for scale in xrange(n_scales):
+                multiscale_feature_list.append(smoothed[scale, :])
+            
+            print "Offer side slope"
+            oss = features.offer_side_slope(d, start_idx, end_idx)
+            feature_list.append(oss)
+            smoothed = filter.multiscale_exponential_smoothing(oss, n_scales = n_scales)
+            for scale in xrange(n_scales):
+                multiscale_feature_list.append(smoothed[scale, :])
+            
+            
+            print "Message count"
+            msgs = d['message_count/100ms'][start_idx:end_idx]
+            feature_list.append(msgs)
+            smoothed_message_counts = filter.multiscale_exponential_smoothing(msgs, n_scales = n_scales)
+            for scale in xrange(n_scales):
+                multiscale_feature_list.append(smoothed_message_counts[scale, :])
+            
+            print "Computing output signal for", d.currency_pair  
+            y = signal(d, start_idx = start_idx, end_idx = end_idx)
+            signals.append(y)
+    # assuming d, start_idx, end_idx are still bound 
+    print "Time" 
+    t = d['t'][start_idx:end_idx] / (3600.0 * 1000 * 24)
+    feature_list.append(t)
+    multiscale_feature_list.append(t)
+            
+    print 
+    print "Concatenating results"
+    simple_features = np.array(feature_list)
+    multiscale_features = np.array(multiscale_feature_list)
+    signals = np.array(signals)
+    return simple_features, multiscale_features, signals 
             
         
         

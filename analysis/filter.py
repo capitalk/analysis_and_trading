@@ -1,5 +1,6 @@
 import numpy as np
 import scipy 
+import scipy.weave 
 import scipy.stats 
 
 def exponential_smoothing(xs, alpha=0.75):

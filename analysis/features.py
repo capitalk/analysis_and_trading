@@ -1,4 +1,18 @@
 
+def bid_side_slope(d, start_idx=None, end_idx=None):
+    """What's the marginal percent increase in price as I want to sell more?"""
+    midprice = d['midprice/100ms'][start_idx:end_idx]
+    total_bid_vol = d['total_bid_vol/100ms'][start_idx:end_idx]
+    bid_range = d['bid_range/100ms'][start_idx:end_idx]
+    return ((bid_range / midprice) * 10**4) / total_bid_vol
+    
+def offer_side_slope(d, start_idx=None, end_idx=None):
+    """What's the marginal percent increase in price as I want to buy more?"""
+    midprice = d['midprice/100ms'][start_idx:end_idx]
+    total_offer_vol = d['total_offer_vol/100ms'][start_idx:end_idx]
+    offer_range = d['offer_range/100ms'][start_idx:end_idx]
+    return ((offer_range / midprice) * 10 ** 4) / total_offer_vol 
+          
 
 
 five_second_features = [ 

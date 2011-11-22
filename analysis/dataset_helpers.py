@@ -28,7 +28,7 @@ def dataset_to_feature_matrix(d, features, start_idx=None, end_idx=None):
 
 def hour_to_idx(t, hour):
     milliseconds = hour * 3600000
-    print "finding", milliseconds, "in range", t[0], t[-1] 
+    #print "finding", milliseconds, "in range", t[0], t[-1] 
     return bisect_left(t, milliseconds)
 
 import signals 
