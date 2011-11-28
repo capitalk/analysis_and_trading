@@ -1,0 +1,89 @@
+Grneral Comments
+There have been many changes to the simulator and I think as of today 28 Nov 
+2011 it's in good working condition - enough fulfill two goals:
+1) Get an accurate portrait of strategy pnl
+2) Allow sufficient flexbility in the execution plan and trading strategy 
+
+Unit Tests
+You can run the 10 unit tests which don't exhaustively test the features 
+of the simulator but do a simple test run of long/short/mixed trade
+tests
+
+"nosetests -v test_simulate2.py"
+
+Running simulations:
+0) Start up ipython --pylab
+
+1) Load the test data
+(d, currency_pair, ts, bids, offers, bid_vols, offer_vols) = simulate2.load_dataset('/home/timir/test_data/FXCM_GBPAUD_2011_06_13.hdf') 
+Loads the datafile and sets up the arrays required for the run and simulate
+
+2) (signals, mean_spread, mean_range) = mc.active1(d)
+All manual classifiers return three parameters:
+
+a) signals - a numpy array of signals which is the same length as the 
+    timeseries returned from the load_dataset call 
+b) mean_spread - the mean spread for the entire timeseries (mean over all 100ms windows)
+c) mean_range - mean range for entire timeseries for (mean over all 100ms windows)
+
+You won't need to call the load_dataset function if you're 
+generating signals with another method but since I'm  generating with 
+manual classifiers as a test I return the signal array and the scalar 
+for mean_spread and mean_range which I use as shitty heuristics 
+for cutoffs on trades. Shitty because the spread in the evening can go 
+beyond the spread+range limits which results in immediate cutoffs 
+when we get signals that don't match the next tick in the market. 
+E.g. spread is 2 and range is 5 whcih is fine for most of the day 
+but at night spread becomes 7 so if we trade when there's a 7 
+spread and the market moves against us by even 1 tick we'll cut since the 
+cutoff is 7 ticks. In the example below I'm doubling the spread+range just 
+to deal with this but in reality it should be dynamic. Make sense? 
+
+3) Run the simulation - quite a few items to note here:
+a) This only runs the simulation aggressively
+
+b) PNL is calculated in the native payment currency - e.g. CCY1/CCY2 then PNL is 
+in CCY2 - THERE IS NO CONVERSION TO USD
+
+c) A signal will be ignored unless min_profit_prct is met - if you want to 
+act on ALL SIGNALS then set min_profit_prct to None
+
+d) Trade size is in payment currency
+
+e) If you specify trade_file then all trades will be saved to that file as csv 
+suitable for viewing with excel
+
+f) If take_profit_pct is specified then strategy will act opportunistically and try to 
+    sell as much of a profitable position as possible even WITHOUT a signal
+
+g) Specifying a fill function will make the pnl non-deterministic - you
+    can specify any function (right now fill_binomial is available) that returns boolean
+
+
+ (pnl, position_deltas, position_running, closing_position, closing_pnl, ignored_signals, m2m_pnl) = simulate2.execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signals, currency_pair, signal_window_time=1, min_window_signals=1, min_profit_prct=0.0001, carry_position = False, default_trade_size = 1, max_position=5, fill_function=None, cut_long = -(mean_spread+mean_range)*2, cut_short= -(mean_spread+mean_range)*2, usd_transaction_cost= 0, trade_file='/tmp/trade_file_output', take_profit_pct=None)
+
+This returns the following:
+a) pnl in payment currency
+b) position deltas for each timestamp
+c) the cumulative position at each timestamp
+d) closing position if any - i.e. last position at end of time series
+e) closing pnl as a result of closing the "closing_position"
+f) ignored_signals - array of len(ts) that contains a reason code for why a 
+signal from the signal array was ignored - 
+    # short version is negative of long
+    POS_LIMIT = +2  # Long limit reached so -POS_LIMIT is short position limit reached
+    MIN_TIME = +3   # Min time between trades while trying to buy violated (negative of this for trying to sell)
+    MIN_PNL = +4    # Min profit prct not met for a buy signal (negative of this for a short trade)
+    CUT = +5        # We cut a long position (- for cutting a short position)
+ 
+
+
+"As much of a profitable position as possible" is expressed in 
+trade_volume_scalar variable parameter to execute_aggressive which says 
+the market must contain (in volume) at least 
+trade_volume_scalar * my_desired_trade_size or else I'll only 
+trade (available_size / trade_size_scalar). Using trade_size_scalar = 2 
+for example means the market must have double the volume I want for 
+me to execute aggressively otherwise I'll only trade half the available volume. 
+
+
