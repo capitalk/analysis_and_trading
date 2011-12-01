@@ -58,41 +58,64 @@ def get_cross_rate(currency):
     else: 
         raise RuntimeError("Currency unknown: " + currency)
 
+def grouper(n, iterable, padvalue = None):
+    from itertools import izip, chain, repeat
+    "grouper(3, 'abcdefg', 'x') --> ('a','b','c'), ('d','e','f'), ('g','x','x')"
+    
+    return izip(*[chain(iterable, repeat(padvalue, n-1))]*n)
+
+def sharpe_ratio(deltas, pnl, window_len):
+    ret_mean = []
+    ret_std = []
+    ret = []
+
+    assert(len(pnl) == len(deltas))
+
+    for i in xrange(len(pnl)):
+        if deltas[i] != 0: ret.append(pnl[i]/deltas[i])
+        else: ret.append(0.)
+
+    print ret
+    assert(len(ret) == len(pnl))
+        
+    ret_groups = grouper(window_len, ret, 0)
+    for i in ret_groups:
+        ret_mean.append(np.mean(i))
+        # TODO could use high - low as well 
+        ret_std.append(np.std(i)) 
+
+    assert(len(ret_mean) == len(ret_std))
+
+    ret_mean = np.array(ret_mean)
+    ret_std = np.array(ret_std)
+
+    sharpes = np.zeros(len(ret_mean))
+    for j in xrange(len(ret_mean)):
+        if ret_std[j] != 0: sharpes[j] = ret_mean[j]/ret_std[j]
+
+    #print "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz> ", len(sharpes) , len(pnl), len(deltas), window_len, len(ret_mean), len(ret_std), len(ret)
+    return sharpes
+   
 def trade_stats(d, \
-                strategy_name, \
                 ts, \
                 signals, \
                 min_profit_prct, \
                 signal_window_time, \
                 min_window_signals, \
-                trade_size_usd, \
-                max_position, \
-                usd_pnl, \
+                trade_size, \
+                take_profit_pct, \
+                position_limit, \
+                pnl, \
+                m2m_pnl, \
                 pos_deltas, \
+                pos_running, \
                 closing_position, \
                 closing_pnl, \
-                mean_spread, \
-                mean_range, \
+                cut_long, \
+                cut_short, \
                 ignored_signals, \
-                tick_file="",\
-                out_path="./"):
-
-    # create logger
-    l = logging.getLogger()
-    l.setLevel(logging.DEBUG)
-    # create file handler and set level to debug
-    #fh = logging.FileHandler(out_file, 'w')
-    sh = logging.StreamHandler()
-    #fh.setLevel(logging.DEBUG)
-    sh.setLevel(logging.DEBUG)
-    # create formatter
-    formatter = logging.Formatter('%(message)s')
-    # add formatter to ch
-    #fh.setFormatter(formatter)
-    sh.setFormatter(formatter)
-    # add ch to logger
-    #l.addHandler(fh)
-    #logging.getLogger().addHandler(sh)
+                out_file=None
+                ):
 
     currency_pair = d.currency_pair
 
@@ -109,10 +132,15 @@ def trade_stats(d, \
     nz_abs_deltas = [abs_deltas[x] for x in nz]
     total_turnover = sum(abs_deltas)
     mean_trade_size = np.mean(nz_abs_deltas[0])
-    total_pnl = sum(usd_pnl)
+    total_pnl = sum(pnl)
+    m2m_max = max(m2m_pnl)
+    m2m_min = min(m2m_pnl)
+    max_pos = max(pos_running)
+    min_pos = min(pos_running)
+    
 
-    nz = np.nonzero(usd_pnl)
-    nz_pnl = [usd_pnl[x] for x in nz]
+    nz = np.nonzero(pnl)
+    nz_pnl = [pnl[x] for x in nz]
     ntrades = len(nz_pnl[0])
     if ntrades > 0:
         mean_pnl = np.mean(nz_pnl[0])
@@ -123,39 +151,49 @@ def trade_stats(d, \
         min_trade_pnl = 0
         max_trade_pnl = 0
         
-    (h,m,s,ms) = millis_to_hmsms(ts[-1]-ts[0])
-    duration_str = "%d hours, %d minutes, %d seconds, %d ms" % (h, m, s, ms)
     timeseries_millis = ts[-1] - ts[0]
+    timeseries_minutes = timeseries_millis / 100 / 60
+    trades_per_minte = ntrades / timeseries_minutes
+    (h,m,s,ms) = millis_to_hmsms(timeseries_millis)
+    duration_str = "%d hours, %d minutes, %d seconds, %d ms" % (h, m, s, ms)
     
+    print "Trade file is: ", duration_str
+
+    sharpe_15min = sharpe_ratio(pos_deltas, pnl, 60*15*10)
+    mean_sharpe_15min = np.mean(sharpe_15min) 
+    #print "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx> ", sharpe_15min
+    #print "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy> ", mean_sharpe_15min
+    nonzero_sharpe = [sharpe_15min[i] for i in np.nonzero(sharpe_15min)]
+    mean_nonzero_sharpe_15min = np.mean(nonzero_sharpe)
     
     #buy_count = np.count_nonzero(buys)
     #sell_count = np.count_nonzero(sells)
     attrs = [
             'time',
             'tick file', 
-            'strategy name', 
-            'currency pair', 
-            'min profit prct',
-            'signal window time',
-            'min window signals',
-            'trade size (USD)',
-            'max position',
-            'duration',
             'timseries millis', 
-            'number of trades',
+            'duration',
+            'currency pair', 
+            'default trade size (CCY2)',
+            'position limit',
+            'signal window time',
             'raw signal count',
-            'total pnl (USD)', 
-            'worst trade pnl (USD)', 
-            'best trade pnl (USD)', 
-            'turnover (USD)', 
+            'number buy signals',
+            'number sell signals', 
+            'min window signals',
+            'min profit prct (signal)',
+            'take profit pct (opportunity)',
+            'cut long', 
+            'cut short', 
+            ' ',
+            'total pnl (CCY2)', 
+            'number of trades',
+            'worst trade pnl (CCY2)', 
+            'best trade pnl (CCY2)', 
+            'turnover (CCY2)', 
             'mean trade size',
             'min trade size',
             'max trade size',
-            'number buy signals',
-            'number sell signals', 
-            'mean spread',
-            'mean range',
-            'cutoff', 
             'limit - long pos',
             'limit - short pos',
             'limit - long time',
@@ -163,41 +201,43 @@ def trade_stats(d, \
             'limit - pnl long miss',
             'limit - pnl short miss',
             'cuts - long',
-            'cuts - short'
+            'cuts - short',
+            'avg sharpe ratio (15 min)',
+            'avg nonzero sharpe ratio (15 min)'
             ]
     write_header = False  
-    if not os.path.isfile(out_path+strategy_name + ".csv"):
+    if not os.path.isfile(out_file + ".stats"):
           write_header = True  
 
-    f = open(out_path + strategy_name + ".csv", "ab") 
+    f = open(out_file + ".stats", "ab") 
     csv_writer = csv.writer(f, delimiter=',', quoting=csv.QUOTE_MINIMAL)
     if write_header:
         csv_writer.writerow(attrs)
-    csv_writer.writerow([time.asctime(time.gmtime()), \
-                    tick_file, \
-                    strategy_name, \
-                    currency_pair[0]+currency_pair[1], \
-                    min_profit_prct, \
-                    signal_window_time, \
-                    min_window_signals, \
-                    trade_size_usd, \
-                    max_position, \
-                    duration_str, \
+    row = [time.asctime(time.gmtime()), \
+                    d.filename, \
                     timeseries_millis, \
-                    ntrades, \
+                    duration_str, \
+                    currency_pair[0]+currency_pair[1], \
+                    trade_size, \
+                    position_limit, \
+                    signal_window_time, \
                     signal_count, \
+                    np.count_nonzero(buys), \
+                    np.count_nonzero(sells), \
+                    min_window_signals, \
+                    min_profit_prct, \
+                    take_profit_pct, \
+                    round(cut_long, 6), \
+                    round(cut_short, 6), \
+                    ' ', \
                     total_pnl, \
+                    ntrades, \
                     min_trade_pnl, \
                     max_trade_pnl, \
                     total_turnover, \
                     mean_trade_size, \
                     min_trade_size, \
                     max_trade_size, \
-                    np.count_nonzero(buys), \
-                    np.count_nonzero(sells), \
-                    mean_spread, \
-                    mean_range, \
-                    mean_spread + mean_range, \
                     sum(ignored_signals == 2), \
                     sum(ignored_signals == -2), \
                     sum(ignored_signals == 3), \
@@ -205,10 +245,15 @@ def trade_stats(d, \
                     sum(ignored_signals == 4), \
                     sum(ignored_signals == -4), \
                     sum(ignored_signals == 5), \
-                    sum(ignored_signals == -5)])
+                    sum(ignored_signals == -5), \
+                    mean_sharpe_15min, \
+                    mean_nonzero_sharpe_15min]
+    csv_writer.writerow(row)
     f.close()                  
-    
-    trade_by_trade = [usd_pnl[x] for x in non_zero_signals]
+    print attrs
+    print row
+    """ 
+    trade_by_trade = [pnl[x] for x in non_zero_signals]
     l.debug("RUN: \"%s\"", time.asctime(time.gmtime()))
     l.debug("Tick file: \"%s\"", tick_file)
     l.debug("Strategy name: \"%s\"", strategy_name)
@@ -216,7 +261,7 @@ def trade_stats(d, \
     l.debug("Signal window time: %d", signal_window_time)
     l.debug("Min window signals: %d", min_window_signals)
     l.debug("Trade size (USD): %f", trade_size_usd)
-    l.debug("Max position: %d", max_position)
+    l.debug("Max position: %d", position_limit)
     l.debug("%s %s %d %s %d %s %s", "Timeseries: ", "[", ts[0], "-", ts[-1], "]", duration_str )
     l.debug("Number of trades: %d", ntrades)
     l.debug("Signal count: %d", signal_count)
@@ -243,6 +288,7 @@ def trade_stats(d, \
     l.debug("%s %s %d %s %d", "Min PnL missed:", "long:", sum(ignored_signals == 4), " short: ", sum(ignored_signals == -4) )
     l.debug("%s %s %d %s %d", "Cuts", "long:", sum(ignored_signals == 5), " short: ", sum(ignored_signals == -5) )
     #return (signal_count, buys, sells, trade_by_trade)
+    """
 
 def fill_binomial(n=1, p=0.8):
    return stats.binom.ppf(np.random.rand(), n, p) 
@@ -358,7 +404,8 @@ def MARK_TO_MARKET_PNL(long_vol, short_vol, curr_bid, curr_offer, long_avg_price
 # min_window_signals = how many signals must agree in a window before we trade 
 # min_profit_prct = how much profit must be made before we act on a signal 
 # usd_transaction_cost = cost per trade 
-def execute_aggressive(ts, 
+def execute_aggressive(d,
+        ts, 
         bids, 
         offers, 
         bid_vols, 
@@ -372,12 +419,11 @@ def execute_aggressive(ts,
         usd_transaction_cost=13, 
         min_time_between_trades=1000, 
         carry_position = True,
-        max_position = None, 
+        position_limit = None, 
         trade_size_scalar=2,
         fill_function=fill_binomial,
         cut_long = -0.0005,
         cut_short = -0.0005,
-        LOG=False, 
         trade_file=None,
         take_profit_pct=None):
 
@@ -465,6 +511,9 @@ def execute_aggressive(ts,
         if short_recv != 0: short_avg_price = short_recv/short_vol
         else: short_avg_price = 0.0
 
+        # set the position to the last position - change if if needed as trades happen below - 
+        # this will be reflected in pos_deltas
+        position_running[i] = long_vol - short_vol 
         
         # Do 2 things before we evaluate the next signal or see if we can take a profit
         # 1) see if we should cut the position
@@ -556,7 +605,7 @@ def execute_aggressive(ts,
             if nbuys >= min_window_signals and nsells == 0: #and num_buy_signals > num_sell_signals:
                 # buying with a long position
                 if long_vol - short_vol >= 0: 
-                    if max_position is None or ((long_vol - short_vol) + trade_size) < max_position:
+                    if position_limit is None or ((long_vol - short_vol) + trade_size) < position_limit:
                         if fill_function is None or fill_function():
                             # size the trade correctly
                             trade_size = size_trade(trade_size/VOLUME_SCALAR, curr_offer_vol, trade_size_scalar, VOLUME_SCALAR)
@@ -581,7 +630,7 @@ def execute_aggressive(ts,
 
                 # buying with a short position
                 elif long_vol - short_vol < 0:
-                    # Always allow closing a position so no check for max_position
+                    # Always allow closing a position so no check for position_limit
                     pnl_prct = (short_avg_price - curr_offer) / short_avg_price
                     # Cover short ONLY at profit
                     if min_profit_prct is None or pnl_prct >= min_profit_prct:
@@ -612,7 +661,7 @@ def execute_aggressive(ts,
 
                 # selling with a short position
                 if (long_vol - short_vol) <= 0:
-                    if max_position is None or ((long_vol - short_vol) - trade_size) > -max_position:
+                    if position_limit is None or ((long_vol - short_vol) - trade_size) > -position_limit:
                         if fill_function is None or fill_function():
                             #size the trade correctly
                             trade_size = size_trade(trade_size/VOLUME_SCALAR, curr_bid_vol, trade_size_scalar, VOLUME_SCALAR)
@@ -634,7 +683,7 @@ def execute_aggressive(ts,
 
                 # selling with a long position
                 elif (long_vol - short_vol) > 0:
-                    # Always allow closing long position so no check for max_position
+                    # Always allow closing long position so no check for position_limit
                     pnl_prct = (curr_bid - long_avg_price) / long_avg_price
                     # Sell long position ONLY at profit
                     if min_profit_prct is None or pnl_prct >= min_profit_prct:
@@ -722,13 +771,14 @@ def execute_aggressive(ts,
     #print "NET POSITION============================>", (long_vol - short_vol)
     if not carry_position: 
         if (long_vol - short_vol) > 0:
+            # TODO - just trade last price instead of average
             last_bid = np.mean(bids[-100:-5])
+            position_deltas[-1] = -(closing_position)
             (long_vol, short_vol, long_paid, short_recv, this_trade_pnl) = \
                 TRADE_AGGRESSIVE(long_vol, short_vol, long_paid, short_recv, "S", closing_position, last_bid, curr_offer, curr_bid_vol, curr_offer_vol, VOLUME_SCALAR)
             profit = this_trade_pnl 
             pnl[-1] += this_trade_pnl 
             closing_pnl = this_trade_pnl
-            position_deltas[-1] += -(long_vol - short_vol) 
             position_running[-1] = (long_vol - short_vol)
             # Logging
             if log_trades is True: 
@@ -738,13 +788,14 @@ def execute_aggressive(ts,
                 csv_writer.writerow(row)
 
         elif (long_vol - short_vol) < 0:
+            # TODO - just trade last price instead of average
             last_offer = np.mean(offers[-100:-5])
+            position_deltas[-1] = -(closing_position)
             (long_vol, short_vol, long_paid, short_recv, this_trade_pnl) = \
                 TRADE_AGGRESSIVE(long_vol, short_vol, long_paid, short_recv, "B", abs(closing_position), curr_bid, last_offer, curr_bid_vol, curr_offer_vol, VOLUME_SCALAR)
             profit = this_trade_pnl 
             pnl[-1] += this_trade_pnl 
             closing_pnl = this_trade_pnl
-            position_deltas[-1] += -(long_vol - short_vol) 
             position_running[-1] = (long_vol - short_vol)
             # Logging
             if log_trades is True: 
@@ -754,6 +805,27 @@ def execute_aggressive(ts,
                 
     print "Raw buy signal count: ", raw_buy_count, " window count: ", windowed_buy_count
     print "Raw sell signal count:", raw_sell_count," window count: ", windowed_sell_count
+    trade_stats(d, \
+                ts, \
+                signal, \
+                min_profit_prct, \
+                signal_window_time, \
+                min_window_signals, \
+                default_trade_size, \
+                take_profit_pct, \
+                position_limit, \
+                pnl, \
+                m2m_pnl, \
+                position_deltas, \
+                position_running, \
+                closing_position, \
+                closing_pnl, \
+                cut_long, \
+                cut_short, \
+                ignored_signals, \
+                out_file=filename
+                )
+    
     return (pnl, position_deltas, position_running, closing_position, closing_pnl, ignored_signals, m2m_pnl)
 
 
