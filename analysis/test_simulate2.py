@@ -73,7 +73,7 @@ def test_long1():
 
     assert(round(sum(pnl),2) == 0.80)
     assert(sum(position_deltas) == 0.0)
-    assert(sum(position_running) == 1)
+    assert(sum(position_running) == 9.)
     assert(closing_position == 0)
 
 def long_test_2():
@@ -94,13 +94,15 @@ def long_test_2():
     # Profit here is convoluted since the price array is artificial and changes very quickly so when averaging the price to close the position the true price is distorted - i.e. first 4 offers average to 1.30
     assert(round(sum(pnl),2) == 0.35)
 
-    pos_deltas_test = [ 1.,  0., -1.,  0.,  0.,  0.,  0.,  0.,  0., -1.]
+    pos_deltas_test = [ 1.,  0., -1.,  0.,  0.,  0.,  0.,  0.,  0., 1.]
     pos_deltas_out = np.equal(position_deltas, pos_deltas_test)
     assert(pos_deltas_out.all() == True)
+    assert(sum(position_deltas) + closing_position == 0)
 
-    pos_run_test  = [ 1.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.]
+    pos_run_test  = [ 1.,  1.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.]
     pos_run_out = np.equal(position_running, pos_run_test)
     assert(pos_run_out.all() == True)
+    
 
     assert(round(closing_pnl,2) == 0.25)
     assert(closing_position == -1.)
@@ -121,11 +123,11 @@ def long_test3():
     # Profit here is convoluted since the price array is artificial and changes very quickly so when averaging the price to close the position the true price is distorted - i.e. first 4 offers average to 1.30
     assert(round(sum(pnl),2) == 0.35)
 
-    pos_deltas_test = [ 1.,  0., -1.,  0.,  0.,  0.,  0.,  0.,  0., -1.]
+    pos_deltas_test = [ 1.,  0., -1.,  0.,  0.,  0.,  0.,  0.,  0., 1.]
     pos_deltas_out = np.equal(position_deltas, pos_deltas_test)
     assert(pos_deltas_out.all() == True)
 
-    pos_run_test  = [ 1.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.]
+    pos_run_test  = [ 1.,  1.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.]
     pos_run_out = np.equal(position_running, pos_run_test)
     assert(pos_run_out.all() == True)
 
@@ -152,7 +154,7 @@ def short_test1():
     pos_deltas_out = np.equal(position_deltas, pos_deltas_test)
     assert(pos_deltas_out.all() == True)
 
-    pos_run_test  = [ -1.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.]
+    pos_run_test  = [ -1.,  -1.,  -1.,  -1.,  -1.,  -1.,  -1.,  -1.,  -1.,  0.]
     pos_run_out = np.equal(position_running, pos_run_test)
     assert(pos_run_out.all() == True)
 
@@ -176,11 +178,11 @@ def short_test2():
     (pnl, position_deltas, position_running, closing_position, closing_pnl, ignored_signals, m2m_pnl) = simulate2.execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signals, currency_pair, signal_window_time=1, min_window_signals=1, min_profit_prct=0.0001, carry_position = False, default_trade_size = 1, max_position=5, fill_function=None, cut_long = -(mean_spread+mean_range)*2, cut_short= -(mean_spread+mean_range)*2, usd_transaction_cost= 0, trade_file='/tmp/testoutshit', take_profit_pct=0.0001)
     assert(round(sum(pnl), 2) == 0.35)
 
-    pos_deltas_test = [ -1.,  0., 1.,  0.,  0.,  0.,  0.,  0.,  0., 1.]
+    pos_deltas_test = [ -1.,  0., 1.,  0.,  0.,  0.,  0.,  0.,  0., -1.]
     pos_deltas_out = np.equal(position_deltas, pos_deltas_test)
     assert(pos_deltas_out.all() == True)
 
-    pos_run_test  = [ -1.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.]
+    pos_run_test  = [ -1.,  -1.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.]
     pos_run_out = np.equal(position_running, pos_run_test)
     assert(pos_run_out.all() == True)
 
@@ -206,11 +208,11 @@ def short_test3():
     (pnl, position_deltas, position_running, closing_position, closing_pnl, ignored_signals, m2m_pnl) = simulate2.execute_aggressive(ts, bids, offers, bid_vols, offer_vols, signals, currency_pair, signal_window_time=1, min_window_signals=1, min_profit_prct=0.0001, carry_position = False, default_trade_size = 1, max_position=5, fill_function=None, cut_long = -(mean_spread+mean_range)*2, cut_short= -(mean_spread+mean_range)*2, usd_transaction_cost= 0, trade_file='/tmp/testoutshit', take_profit_pct=None)
     assert(round(sum(pnl), 2) == -0.55)
 
-    pos_deltas_test = [-1.,  0.,  0.,  0.,  0.,  0.,  1.,  0.,  0.,  1.]
+    pos_deltas_test = [-1.,  0.,  0.,  0.,  0.,  0.,  1.,  0.,  0.,  -1.]
     pos_deltas_out = np.equal(position_deltas, pos_deltas_test)
     assert(pos_deltas_out.all() == True)
 
-    pos_run_test  = [ -1.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.]
+    pos_run_test  = [ -1.,  -1.,  -1.,  -1.,  -1.,  -1.,  0.,  0.,  0.,  0.]
     pos_run_out = np.equal(position_running, pos_run_test)
     assert(pos_run_out.all() == True)
 
@@ -245,7 +247,8 @@ def mix_test1():
     pos_deltas_out = np.equal(position_deltas, pos_deltas_test)
     assert(pos_deltas_out.all() == True)
 
-    pos_run_test  = [ 1.,  2.,  3.,  0.,  0.,  0., -1.,  0.,  0., -1.]
+    # End with position since carry_position is True here
+    pos_run_test  = [ 1.,  2.,  3.,  3.,  0.,  0., -1.,  -1.,  0., -1.]
     pos_run_out = np.equal(position_running, pos_run_test)
     assert(pos_run_out.all() == True)
 
@@ -271,11 +274,11 @@ def mix_test2():
 
     assert(round(sum(pnl), 2) == .39)
 
-    pos_deltas_test = [ 1.,  1.,  1.,  0., -3.,  0., -1.,  0.,  1., -1.]
+    pos_deltas_test = [ 1.,  1.,  1.,  0., -3.,  0., -1.,  0.,  1., 1.]
     pos_deltas_out = np.equal(position_deltas, pos_deltas_test)
     assert(pos_deltas_out.all() == True)
 
-    pos_run_test  = [ 1.,  2.,  3.,  0.,  0.,  0., -1.,  0.,  0.,  0.] 
+    pos_run_test  = [ 1.,  2.,  3.,  3.,  0.,  0., -1.,  -1.,  0.,  0.] 
     pos_run_out = np.equal(position_running, pos_run_test)
     assert(pos_run_out.all() == True)
 
@@ -304,7 +307,7 @@ def mix_test3():
     pos_deltas_out = np.equal(position_deltas, pos_deltas_test)
     assert(pos_deltas_out.all() == True)
 
-    pos_run_test  = [ 1.,  2.,  3.,  0.,  0.,  0., -1.,  0.,  1.,  0.]
+    pos_run_test  = [ 1.,  2.,  3.,  3.,  0.,  0., -1.,  0.,  1.,  0.]
     pos_run_out = np.equal(position_running, pos_run_test)
     assert(pos_run_out.all() == True)
 
