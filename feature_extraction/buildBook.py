@@ -6,13 +6,14 @@ from datetime import datetime
 
 import sys
 import csv
-from orderBook import * 
+from orderBook import Action, Order, OB 
 import orderBookConstants
 import progressbar
 import os
 import numpy 
-
-
+######################
+# Version 1
+######################
 # 20110501-23:59:59.565, EUR/NZD, Q, 1, 2, 1.83429, 1000000, 1
 # 0 = datetime
 # 1 = currency
@@ -23,6 +24,25 @@ import numpy
 # 6 = size
 # 7 = num orders in level 
 # 8 = [, separated list of size in #7 with order sizes]
+
+
+######################
+#  Version 3
+
+# header
+# actions = {A|D|M}, side, price, volume 
+# orderbook header = OB, ccy, monotonic timestamp, exchange timestamp
+# orderbook entry = {Q|D}, monotonic timestamp, side, level, price, size, time sorted list of order sizes
+# Example: 
+#
+# V3,EUR/USD,0
+# A,0,1.36307,500000
+# M,0,1.36307,500000
+# D,1,1.3631,250000
+# OB,EUR/USD,3554600:273218531,1315404477:864000000
+# Q,3554600:273218531,0,1,1.36307,1000000,500000,500000
+# Q,3554600:270045798,1,1,1.3631,1000000,1000000
+
 
 obc = orderBookConstants 
 
@@ -98,8 +118,6 @@ def parse_datetime(s):
     minute = int(s[12:14])
     return datetime(year, month, day, hour, minute, second, 1000* millisecond)
 
-
-
 # since many datetimes are repeats, 
 # cache last datetime and last millisecond string,
 lastMillisecond = None
@@ -128,7 +146,7 @@ def parse_datetime_opt(s):
 
 
 import gc
-def books_from_lines(lines, debug=False, end=None, drop_out_of_order=False):
+def books_from_lines_v1(lines, debug=False, end=None, drop_out_of_order=False):
     currBook = None
     # keep track of which side the book starts on,
     # if that side repeats we've reached a new book 
@@ -159,25 +177,124 @@ def books_from_lines(lines, debug=False, end=None, drop_out_of_order=False):
         else: 
             row = line.split(',')
             side = row[obc.SIDE]
-            level = int(row[obc.LEVEL])
-            #pairName = row[obc.CURRENCY]
-            price = float(row[obc.PRICE])
-            size = long(row[obc.SIZE])
-            timestamp = parse_datetime_opt(row[obc.TIMESTAMP])
-            entry = Order(timestamp = timestamp, side = side, level = level, price = price, size = size)
-            depth_count = int(row[obc.ORDERDEPTHCOUNT]) 
-            if depth_count > 1: entry.orderdepth = int(row[obc.ORDERDEPTH])
-            if (entry.side == obc.BID): currBook.add_bid(entry)
-            elif (entry.side == obc.OFFER): currBook.add_offer(entry)
+            entry = Order(
+                timestamp = parse_datetime_opt(row[obc.TIMESTAMP]), 
+                side = side, 
+                level = int(row[obc.LEVEL]), 
+                price = float(row[obc.PRICE]), 
+                size = long(row[obc.SIZE]), 
+                orderdepthcount = int(row[obc.ORDERDEPTHCOUNT]), 
+                ccy = row[obc.CURRENCY]
+            )
+            if (side == obc.BID): currBook.add_bid(entry)
+            elif (side == obc.OFFER): currBook.add_offer(entry)
     gc.enable()
     return book_list 
+
+def books_from_lines_v3(lines, debug=False, end=None, drop_out_of_order=False):
+    header = {} 
+    actions = [] 
+    currBook = None
+    books = [] 
+    # keep this around for printing debug info on restarts
+    lastMonotonicTimeStr = None  
+    
+    def parse_header(line): 
+        # make sure nothing else has been parsed yet 
+        assert currBook == None 
+        assert len(books) == 0 
+        assert actions == [] 
+        assert len(header) == 0 
         
+        v, ccy, maxdepth = lines[0].split(",")
+        assert v == 'V0.0.3'
+        header['ccy'] = ccy
+        header['depth'] = int(maxdepth.strip())
+        
+    def parse_action(line):
+        action_type, side, price, volume = line.split(",")
+        action = Action(
+          action_type = action_type, 
+          side = int(side), 
+          price = float(price), 
+          volume = int(volume)
+        )
+        actions.append(action) 
+        
+    def start_new_orderbook(line): 
+        _, _, monotonic_time, exchange_time = line.split(',')
+        lastMonotonicTimeStr = monotonic_time 
+        monotonic_seconds, monotonic_microseconds = monotonic_time.split(":")
+        monotonic_milliseconds = int(monotonic_seconds)*1000 + int(monotonic_microseconds) / 1000
+        exchange_seconds, exchange_microseconds = exchange_time.split(":")
+        exchange_milliseconds = int(exchange_seconds)*1000 + float(exchange_microseconds) / 1000
+        currBook = OB(lastUpdateTime = exchange_milliseconds, lastUpdateMonotonic = monotonic_milliseconds, actions = actions)
+        actions = []
+        
+    def parse_orderbook_entry(line): 
+        _, monotonic_timestamp, side, level, price, size, _ = line.split(',')
+        seconds, microseconds = monotonic_timestamp.split(":")
+        time_ms = int(seconds) * 1000 + float(microseconds) / 1000
+        side = int(side)
+        level = int(level)
+        price = float(price)
+        size = int(size)
+        
+        order = Order(
+          timestamp=time_ms, 
+          side=side, 
+          level=level,
+          price=price,
+          size=size,
+        )
+        if side == 0:
+            currBook.add_offer(order)
+        else:
+            currBook.add_bid(order) 
+                
+    def unsupported(line):
+        assert False 
+        
+    def ignore(line):
+        pass
+
+    def print_restart(line):
+        print line, "last orderbook time = ", lastMonotonicTimeStr   
+        
+    dispatch_table = {
+      'V': parse_header, 
+      'A': parse_action, 
+      'D': parse_action, 
+      'M': parse_action, 
+      'O': start_new_orderbook, 
+      'Q': parse_orderbook_entry, 
+      'D': unsupported, 
+      'R': print_restart, 
+      '#': ignore, 
+    }
+    
+    gc.disable() 
+    for line in lines:
+        dispatch_table[line[0]](line)
+    gc.enable() 
+    
+    return header, books 
 
 
 def read_books(filename, debug=False, end=None): 
     print "Reading orderbook into memory..." 
     lines = read_lines(filename)
-    return books_from_lines(lines, debug, end)
+    
+    if lines[0].startswith('V0.0.3'):
+        header, orderbook = books_from_lines_v3(lines, debug, end)
+    else:
+        orderbooks = books_from_lines_v1(lines, debug, end)
+        depths = [len(ob.bids) for ob in orderbooks]
+        maxdepth = reduce(max, depths)
+        ccy = orderbooks[0].bids[0].
+        header = { 'depth': maxdepth, ccy = ccy }
+        return header, orderbooks 
+        
         
 parser = OptionParser();
 parser.add_option("-r" , "--read", dest="bookfile", help="Read book from file", metavar="FILE")

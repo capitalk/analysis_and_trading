@@ -33,7 +33,7 @@ def hour_to_idx(t, hour):
 
 import signals 
 import features 
-def load_file(filename, feature_list = features.five_second_features, signal = signals.prct_future_midprice_change, start_hour=None, end_hour=None):
+def load_file(filename, feature_list, signal, start_hour=None, end_hour=None):
     d = Dataset(filename)
     start_idx = None if start_hour is None else hour_to_idx(d.t, start_hour)
     end_idx = None if end_hour is None else hour_to_idx(d.t, end_hour)

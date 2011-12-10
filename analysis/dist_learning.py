@@ -13,7 +13,7 @@ from treelearn import ClusteredRegression, ClusteredClassifier
 from treelearn import ObliqueTree
 from treelearn import mk_sgd_tree, mk_svm_tree 
 from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.svm import LinearSVC 
+from sklearn.svm import LinearSVC
 
 def get_dict(dicts, key):
     if key in dicts: return dicts[key]
@@ -49,8 +49,8 @@ def worker(params, features, train_files, test_files, start_hour, end_hour):
     
     print "Encoding training data..." 
     train_data = encoder.fit_transform(train_data)
-    print "Encoded shape:", train_data.shape 
-    print "train_data[500]", train_data[500, :] 
+    print "Encoded shape:", train_data.shape
+    print "train_data[500]", train_data[500, :]
     
     if 'class_weight' in train_params: 
         model.fit(train_data, train_signal, class_weight=train_params['class_weight'])
@@ -238,7 +238,6 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action='store_true', default=False, dest='debug')
     
     parser.add_argument("--output", dest="output", default=None, help="output file for model and encoder")
-    
     
     parser.add_argument("--regression", dest='regression', action='store_true', default=False)
     parser.add_argument("--dict_size", dest="dict_size", nargs="*", default=[None])

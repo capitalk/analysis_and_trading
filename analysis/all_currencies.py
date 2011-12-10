@@ -84,16 +84,16 @@ def powerset(seq):
             yield item
 
 
-def pairs(xs):
+def make_pairs(xs):
     return [ (x,y) for x in xs for y in xs]
     
-def maximum_clique(unique_names, rates):
+def maximum_clique(unique_names, pairs):
     best_subset = []
     for subset in powerset(unique_names):
         if len(subset) > len(best_subset):
             good = True 
-            for (ccy_a, ccy_b) in pairs(subset):
-                if ccy_a != ccy_b and (ccy_a, ccy_b) not in rates:
+            for (ccy_a, ccy_b) in make_pairs(subset):
+                if ccy_a != ccy_b and (ccy_a, ccy_b) not in pairs:
                     good = False
                     break
             if good:
@@ -104,9 +104,9 @@ import glob
 from dataset import Dataset 
 from dataset_helpers import hour_to_idx
 
-def load_pairwise_rates_from_path(path, start_hour=12, end_hour=22):
+def load_pairwise_tensor(path, fn, reciprocal_fn, diagonal, start_hour = 12, end_hour = 20):
     currencies = set([])
-    rates = {}
+    vectors = {}
     nticks = None
     all_files = glob.glob(path)
     assert len(all_files) > 0
@@ -115,27 +115,35 @@ def load_pairwise_rates_from_path(path, start_hour=12, end_hour=22):
         start_idx = hour_to_idx(d.t, start_hour)
         end_idx = hour_to_idx(d.t, end_hour)
         nticks = end_idx - start_idx 
-        bids = d['bid/100ms'][start_idx:end_idx]
-        offers = d['offer/100ms'] [start_idx:end_idx]
         ccy_a, ccy_b = d.currency_pair
         currencies.add(ccy_a)
         currencies.add(ccy_b)
-        rates[ (ccy_a, ccy_b) ] = bids 
-        rates[ (ccy_b, ccy_a) ] = 1.0 / offers
+        vectors[ (ccy_a, ccy_b) ] = fn(d)[start_idx:end_idx] 
+        vectors[ (ccy_b, ccy_a) ] = reciprocal_fn(d)[start_idx:end_idx]
 
-    clique = list(maximum_clique(currencies, rates))
+    clique = list(maximum_clique(currencies, vectors))
     n = len(clique)
-    clique_rates = np.zeros( [n,n, nticks], dtype='float')
+    result = np.zeros( [n,n, nticks], dtype='float')
     for i in xrange(n):
         ccy_a = clique[i] 
         for j in xrange(n):
             if i == j:
-                clique_rates[i,j,:] = 1.0
+                result[i,j,:] = diagonal
             else: 
                 ccy_b = clique[j]
-                clique_rates[i,j, :] = rates[ (ccy_a, ccy_b) ] 
-    return clique, clique_rates, currencies, rates 
+                result[i,j, :] = vectors[ (ccy_a, ccy_b) ] 
+    return clique, result, currencies, vectors 
+    
 
+def load_pairwise_rates_from_path(path, start_hour=12, end_hour=20):
+    fn1 = lambda d: d['bid/100ms']
+    fn2 = lambda d: 1.0/d['offer/100ms']
+    return load_pairwise_tensor(path, fn1, fn2, 1.0, start_hour, end_hour)
+
+def load_pairwise_message_counts_from_path(path, start_hour = 12, end_hour = 20):
+    fn = lambda d: d['message_count/100ms']
+    return load_pairwise_tensor(path, fn, fn, 0, start_hour, end_hour)
+    
 import scipy.stats 
 def ccy_value_hmean(rate_matrix_series):
     """
@@ -301,9 +309,9 @@ def load_pairwise_features_from_path(path, signal = signals.bid_offer_cross, sta
             
     print 
     print "Concatenating results"
-    simple_features = np.array(feature_list)
-    multiscale_features = np.array(multiscale_feature_list)
-    signals = np.array(signals)
+    simple_features = np.array(feature_list).T
+    multiscale_features = np.array(multiscale_feature_list).T
+    signals = np.array(signals, dtype='int')
     return simple_features, multiscale_features, signals 
             
         
