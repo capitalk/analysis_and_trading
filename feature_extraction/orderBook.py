@@ -1,10 +1,17 @@
 from operator import attrgetter, itemgetter, methodcaller
 
 import orderBookConstants as obc
-
+    
 class Order:
-    def __init__(self, timestamp=None, side=None, level=None, price=None, size=None, orderdepthcount=None, orderdepth=None):
-#        self.MDEntryId = MDEntryId
+    def __init__(self, 
+            timestamp=None, 
+            side=None, 
+            level=None, 
+            price=None, 
+            size=None, 
+            orderdepthcount=None, 
+            orderdepth=None, 
+            ccy = None):
         self.timestamp = timestamp
         self.side = side
         self.level = level
@@ -12,6 +19,7 @@ class Order:
         self.size = size
         self.orderdepthcount = orderdepthcount
         self.orderdepth = orderdepth
+        self.ccy = ccy 
     
     def __str__(self):
       return "%s, %s, %s, %s, %s, %s, %s" % (self.timestamp, self.side, self.level, self.price, self.size, self.orderdepthcount, self.orderdepth)
@@ -19,22 +27,21 @@ class Order:
     def p(self):
         print self.__str__()
 
-class OrderEntry:
-    def __init__(self, price):
+class Action:
+    def __init__(self, action_type = None, side = None, price = None, volume = None):
+        self.action_type = action_type 
+        self.side = side
         self.price = price
-        self.size = 0
-        self.orders = []
-
-    def add_order(self, entry):
-        self.orders.add(entry)
-
+        self.volume = volume 
 
 class OB:
-    def __init__(self, lastUpdateTime = None):
+    def __init__(self, lastUpdateTime = None, lastUpdateMonotonic = None, actions = None):
         self.bids = [] 
         self.offers = [] 
         self.lastUpdateTime = lastUpdateTime
-
+        self.lastUpdateMonotonic = lastUpdateMonotonic 
+        self.actions = actions
+    
     def add_bid(self, entry):
         assert len(self.bids) == 0 or entry.price < self.bids[-1].price
         self.bids.append(entry)

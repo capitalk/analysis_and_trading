@@ -2,6 +2,9 @@
 import numpy as np 
 from treelearn import ClusteredRegression
 from sklearn.linear_model import LinearRegression    
+import filter 
+import features 
+import signals 
 
 def best_regression_lags(x, min_lag = 3, 
                             n_lags = 10,
@@ -81,16 +84,16 @@ def powerset(seq):
             yield item
 
 
-def pairs(xs):
+def make_pairs(xs):
     return [ (x,y) for x in xs for y in xs]
     
-def maximum_clique(unique_names, rates):
+def maximum_clique(unique_names, pairs):
     best_subset = []
     for subset in powerset(unique_names):
         if len(subset) > len(best_subset):
             good = True 
-            for (ccy_a, ccy_b) in pairs(subset):
-                if ccy_a != ccy_b and (ccy_a, ccy_b) not in rates:
+            for (ccy_a, ccy_b) in make_pairs(subset):
+                if ccy_a != ccy_b and (ccy_a, ccy_b) not in pairs:
                     good = False
                     break
             if good:
@@ -101,36 +104,46 @@ import glob
 from dataset import Dataset 
 from dataset_helpers import hour_to_idx
 
-def pairwise_rates_from_path(path, start_hour=18, end_hour=20):
+def load_pairwise_tensor(path, fn, reciprocal_fn, diagonal, start_hour = 12, end_hour = 20):
     currencies = set([])
-    rates = {}
+    vectors = {}
     nticks = None
-    for filename in glob.glob(path):
+    all_files = glob.glob(path)
+    assert len(all_files) > 0
+    for filename in all_files:
         d = Dataset(filename)
         start_idx = hour_to_idx(d.t, start_hour)
         end_idx = hour_to_idx(d.t, end_hour)
         nticks = end_idx - start_idx 
-        bids = d['bid'][start_idx:end_idx]
-        offers = d['offer'] [start_idx:end_idx]
         ccy_a, ccy_b = d.currency_pair
         currencies.add(ccy_a)
         currencies.add(ccy_b)
-        rates[ (ccy_a, ccy_b) ] = bids 
-        rates[ (ccy_b, ccy_a) ] = 1.0 / offers
+        vectors[ (ccy_a, ccy_b) ] = fn(d)[start_idx:end_idx] 
+        vectors[ (ccy_b, ccy_a) ] = reciprocal_fn(d)[start_idx:end_idx]
 
-    clique = list(maximum_clique(currencies, rates))
+    clique = list(maximum_clique(currencies, vectors))
     n = len(clique)
-    clique_rates = np.zeros( [n,n, nticks], dtype='float')
+    result = np.zeros( [n,n, nticks], dtype='float')
     for i in xrange(n):
         ccy_a = clique[i] 
         for j in xrange(n):
             if i == j:
-                clique_rates[i,j,:] = 1.0
+                result[i,j,:] = diagonal
             else: 
                 ccy_b = clique[j]
-                clique_rates[i,j, :] = rates[ (ccy_a, ccy_b) ] 
-    return clique, clique_rates, currencies, rates 
+                result[i,j, :] = vectors[ (ccy_a, ccy_b) ] 
+    return clique, result, currencies, vectors 
+    
 
+def load_pairwise_rates_from_path(path, start_hour=12, end_hour=20):
+    fn1 = lambda d: d['bid/100ms']
+    fn2 = lambda d: 1.0/d['offer/100ms']
+    return load_pairwise_tensor(path, fn1, fn2, 1.0, start_hour, end_hour)
+
+def load_pairwise_message_counts_from_path(path, start_hour = 12, end_hour = 20):
+    fn = lambda d: d['message_count/100ms']
+    return load_pairwise_tensor(path, fn, fn, 0, start_hour, end_hour)
+    
 import scipy.stats 
 def ccy_value_hmean(rate_matrix_series):
     """
@@ -142,7 +155,7 @@ def ccy_value_hmean(rate_matrix_series):
     
 def foreach_matrix(f, ms):
     """Apply function f to each 2D matrix, iterating over 3rd dim"""
-    return np.array([f(ms[:, :, i]) for i in xrange(ms.shape[2])])
+    return np.array([f(ms[:, :, i]) for i in xrange(ms.shape[2])]).T
 
 def abs_first_eigenvector(x):
     _, V = np.linalg.eig(x)
@@ -198,3 +211,109 @@ def make_ideal_rate_series(value_series):
         for j in xrange(n_ccy):
             result[i, j, :] = value_series[i, :] / value_series[j, :] 
     return result 
+
+def difference_from_ideal_rate(rates, values):
+    ideal_rates = make_ideal_rate_series(values)
+    differences = np.zeros_like(rates)
+    n = rates.shape[0]
+    for i in xrange(n):
+        for j in xrange(n):
+            midprice = 0.5*rates[i,j, :] + 0.5 / rates[j, i, :]
+            differences[i,j,:] = midprice - ideal_rates[i,j, :]
+    return differences 
+
+
+
+def load_pairwise_features_from_path(path, signal = signals.bid_offer_cross, start_hour=12, end_hour=22):
+    
+    print "Searching for maximum clique"
+    clique, clique_rates, _, _ = load_pairwise_rates_from_path(path, start_hour, end_hour)
+    
+    clique_size = len(clique)
+    print "Found clique of size", clique_size, ":",  clique 
+    
+    n_scales = 4
+    n_pair_features = 3 
+    n_pairs = (clique_size-1) * (clique_size-2)
+    n_features = n_scales * (clique_size + n_pairs * n_pair_features)
+    print "Computing", n_features, "features for", n_pairs, "currency pairs over", n_scales, "time scales"
+    feature_list = []
+    multiscale_feature_list = [] 
+    
+    # add currency value gradients to features 
+    print "Computing currency values from principal eigenvectors of rate matrices (with shape", clique_rates.shape, ")"
+    ccy_values = ccy_value_eig(clique_rates)
+    
+    for i in xrange(clique_size):       
+        gradients = filter.multiscale_exponential_gradients(ccy_values[i, :], n_scales = n_scales)
+        feature_list.append(gradients[0, :])
+        for scale in xrange(n_scales):
+            multiscale_feature_list.append(gradients[scale, :])
+    
+    # compute difference from ideal rates 
+    pair_counter = 0
+    for i in xrange(clique_size):
+        for j in np.arange(clique_size-i-1)+i+1:
+            ideal_midprice = ccy_values[i, :] / ccy_values[j, :]
+            midprice = 0.5*clique_rates[i,j,:] + 0.5/clique_rates[j,i,:]
+
+            diff = midprice - ideal_midprice
+            feature_list.append(diff)
+            smoothed = filter.multiscale_exponential_smoothing(diff, n_scales = n_scales)
+            for scale in xrange(n_scales):
+                multiscale_feature_list.append(smoothed[scale, :])
+            
+    
+    
+    signals = []
+    for filename in glob.glob(path):
+        d = Dataset(filename)
+        ccy_a, ccy_b = d.currency_pair 
+        if ccy_a in clique and ccy_b in clique:
+            start_idx = hour_to_idx(d.t, start_hour)
+            end_idx = hour_to_idx(d.t, end_hour)
+            
+            print 
+            print "Getting features for", d.currency_pair 
+            print 
+            print "Bid side slope"
+            bss = features.bid_side_slope(d, start_idx, end_idx)
+            feature_list.append(bss)
+            smoothed = filter.multiscale_exponential_smoothing(bss, n_scales = n_scales)
+            for scale in xrange(n_scales):
+                multiscale_feature_list.append(smoothed[scale, :])
+            
+            print "Offer side slope"
+            oss = features.offer_side_slope(d, start_idx, end_idx)
+            feature_list.append(oss)
+            smoothed = filter.multiscale_exponential_smoothing(oss, n_scales = n_scales)
+            for scale in xrange(n_scales):
+                multiscale_feature_list.append(smoothed[scale, :])
+            
+            
+            print "Message count"
+            msgs = d['message_count/100ms'][start_idx:end_idx]
+            feature_list.append(msgs)
+            smoothed_message_counts = filter.multiscale_exponential_smoothing(msgs, n_scales = n_scales)
+            for scale in xrange(n_scales):
+                multiscale_feature_list.append(smoothed_message_counts[scale, :])
+            
+            print "Computing output signal for", d.currency_pair  
+            y = signal(d, start_idx = start_idx, end_idx = end_idx)
+            signals.append(y)
+    # assuming d, start_idx, end_idx are still bound 
+    print "Time" 
+    t = d['t'][start_idx:end_idx] / (3600.0 * 1000 * 24)
+    feature_list.append(t)
+    multiscale_feature_list.append(t)
+            
+    print 
+    print "Concatenating results"
+    simple_features = np.array(feature_list).T
+    multiscale_features = np.array(multiscale_feature_list).T
+    signals = np.array(signals, dtype='int')
+    return simple_features, multiscale_features, signals 
+            
+        
+        
+        

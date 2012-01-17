@@ -1,7 +1,7 @@
 import math 
 import numpy as np
 import analysis
-from analysis import padded_delta
+from filter import padded_delta
 import scipy 
 
 def aggressive_profit(data, max_hold_frames = 100, num_profitable_frames = 2, target_prct=0.0001, start_idx=None, end_idx=None):
