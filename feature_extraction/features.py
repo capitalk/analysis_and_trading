@@ -19,9 +19,38 @@ def best_offer(orderBook):
 def midprice(orderBook):
     return (orderBook.offers[0].price + orderBook.bids[0].price) / 2 
 
+def momentum_helper(midprice, side, actions): 
+    m = 0.0 
+    for action in actions:
+        price_delta = midprice - action.price 
+        if price_delta < 0: price_delta = -price_delta 
+        
+        # delete or add? 
+        if action.action_type == 'D':
+            delta_vol = action.volume
+        elif action.action_type == 'A': 
+            delta_vol = action.volume 
+        # modification might be either up or down 
+        else:
+            
+            delta_vol = 
+            
+            
+            
+                if side == 1:
+            self.currBook.add_offer(order)
+
+def bid_momentum(orderBook): 
+    """requires v3+ orderbook with actions attached"""
+    
+
+
+def offer_momentum(orderBook): 
+    """requires v3+ orderbook with actions attached"""
+
 def timestamp(orderBook):
     return orderBook.lastUpdateTime
-
+    
 def second_timestamp(orderBook):
     t = orderBook.lastUpdateTime.time()
     return int(t.hour * 3600 + t.minute * 60 + t.second)

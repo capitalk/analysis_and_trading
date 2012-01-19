@@ -1,6 +1,7 @@
 from operator import attrgetter, itemgetter, methodcaller
 
 import orderBookConstants as obc
+
     
 class Order:
     def __init__(self, 
@@ -10,7 +11,6 @@ class Order:
             price=None, 
             size=None, 
             orderdepthcount=None, 
-            orderdepth=None, 
             ccy = None):
         self.timestamp = timestamp
         self.side = side
@@ -18,11 +18,10 @@ class Order:
         self.price = price
         self.size = size
         self.orderdepthcount = orderdepthcount
-        self.orderdepth = orderdepth
         self.ccy = ccy 
     
     def __str__(self):
-      return "%s, %s, %s, %s, %s, %s, %s" % (self.timestamp, self.side, self.level, self.price, self.size, self.orderdepthcount, self.orderdepth)
+      return "%s, %s, %s, %s, %s, %s" % (self.timestamp, self.side, self.level, self.price, self.size, self.orderdepthcount)
 
     def p(self):
         print self.__str__()
@@ -32,33 +31,38 @@ class Action:
         self.action_type = action_type 
         self.side = side
         self.price = price
-        self.volume = volume 
+        self.volume = volume
 
 class OB:
-    def __init__(self, lastUpdateTime = None, lastUpdateMonotonic = None, actions = None):
+    def __init__(self, lastUpdateTime, lastUpdateMonotonic = None, actions = []):
         self.bids = [] 
         self.offers = [] 
         self.lastUpdateTime = lastUpdateTime
-        self.lastUpdateMonotonic = lastUpdateMonotonic 
-        self.actions = actions
+        self.lastUpdateMonotonic = lastUpdateMonotonic
+        self.actions = actions 
+        self.side_lookup = {0:self.bids, 1:self.offers}
     
+    def add_order(self, order):
+        self.side_lookup[order.side].append(order)
+        if (self.lastUpdateTime is None) or (self.lastUpdateTime < order.timestamp): 
+            self.lastUpdateTime = order.timestamp 
+
     def add_bid(self, entry):
-        assert len(self.bids) == 0 or entry.price < self.bids[-1].price
+        #assert len(self.bids) == 0 or entry.price < self.bids[-1].price
         self.bids.append(entry)
         if (self.lastUpdateTime is None) or (self.lastUpdateTime < entry.timestamp): 
             self.lastUpdateTime = entry.timestamp 
-
+    def add_offer(self, entry):
+        #assert len(self.offers) == 0 or entry.price > self.offers[-1].price
+        self.offers.append(entry) 
+        if (self.lastUpdateTime is None) or (self.lastUpdateTime < entry.timestamp): 
+            self.lastUpdateTime = entry.timestamp 
+    
     def best_bid(self): 
         if len(self.bids) > 0:
             return self.bids[0] 
         else:
             return None
-
-    def add_offer(self, entry):
-        assert len(self.offers) == 0 or entry.price > self.offers[-1].price
-        self.offers.append(entry) 
-        if (self.lastUpdateTime is None) or (self.lastUpdateTime < entry.timestamp): 
-            self.lastUpdateTime = entry.timestamp 
 
     def best_offer(self): 
         if len(self.offers) > 0:
