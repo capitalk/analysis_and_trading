@@ -167,6 +167,44 @@ def mean_crossing_rate(x, mean = None):
     crossing_indicator = lagged_product  < 0 
     crossing_count = np.sum(crossing_indicator)
     return crossing_count / float(len(x))
-    
 
+# given a series of unevenly spaced 1ms, average every 100ms by giving
+# higher weights to values which survive longer 
+def time_weighted_average_100ms(feature_1ms, start_indices, end_indices, milliseconds, frame_times, empty_frames):
+    n = len(frame_times)
+    
+    feature_100ms = np.zeros(n)
+    for (i, end_t) in enumerate(frame_times): 
+        # empty frames get same value as previous frame 
+        if empty_frames[i]:
+            feature_100ms[i] = feature_100ms[i-1]
+        else:
+            start_idx = start_indices[i] 
+            start_t = end_t - 100 
+            end_idx = end_indices[i] 
+                
+            time_slice = milliseconds[start_idx:end_idx]
+            time_slice_from_zero = time_slice - start_t 
+                
+            if (time_slice_from_zero[0] == 1) or (i == 0):
+                # weights are time between frame arrivals
+                weights = np.diff(np.concatenate( [time_slice_from_zero, [101]] )) 
+                slice_1ms = feature_1ms[start_idx:end_idx]
+            else:
+                # if there's no frame on the first 1ms, then we need to 
+                # reach back to the last 1ms in the previous 100ms 
+                weights = np.diff(np.concatenate( [[1], time_slice_from_zero, [101]] ))
+                slice_1ms = feature_1ms[start_idx-1:end_idx] 
+            feature_100ms[i] = np.dot(weights, slice_1ms) / np.sum(weights)
+    return feature_100ms 
+
+def sum_100ms(feature_1ms, start_indices, end_indices, frame_times):
+    n = len(frame_times)
+    
+    feature_100ms = np.zeros(n, dtype='float')
+    for (i, end_t) in enumerate(frame_times): 
+        start_idx = start_indices[i] 
+        end_idx = end_indices[i]     
+        feature_100ms[i] = np.sum(feature_1ms[start_idx:end_idx])
+    return feature_100ms 
     

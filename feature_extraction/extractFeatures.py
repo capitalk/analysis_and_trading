@@ -25,9 +25,12 @@ parser.add_option("-d", "--feature_dir",
 parser.add_option("-p", "--profile", dest="profile", action="store_true", default=False, help="run inside profiler")
 parser.add_option("-c", "--cloud", dest="use_cloud", action="store_true", default=False, help="run computations using picloud")
 parser.add_option("-s", "--cloud_sim", dest="cloud_sim", action="store_true", default=False, help="use cloud simulator")
+parser.add_option("-a", "--aggregate", dest="aggregate", action="store_true", default=False, help="aggregate features over longer time scales")
 parser.add_option("--heap_profile", dest="heap_profile", action='store_true', default=False, help="print information about live heap objects")
 
 (options, args) = parser.parse_args()
+print "Args = ", args
+print "Options = ", options
 
 timescales = [("1s", 1000), ("5s", 5000),  ("50s", 50000), ("500s", 500000)]
 extractor = FeaturePipeline(timescales=timescales)
@@ -44,17 +47,23 @@ extractor.add_feature('bid_vol', best_bid_volume)
 extractor.add_feature('total_bid_vol', bid_volume)
 extractor.add_feature('total_offer_vol', offer_volume)
 extractor.add_feature('t_mod_1000', fraction_of_second, use_window_reducers=False)
+extractor.add_feature('message_count', message_count, sum_100ms=True)
+# V3 orderbook action  features 
+extractor.add_feature('added', total_added_volume, sum_100ms=True)
+extractor.add_feature('deleted', total_deleted_volume, sum_100ms=True)
+extractor.add_feature('net_action_volume', net_volume, sum_100ms=True)
+extractor.add_feature('filled', fill_volume, sum_100ms=True)
+extractor.add_feature('canceled', canceled_volume, sum_100ms=True)
+extractor.add_feature('insertion_flow', insertion_flow)
 
 extractor.add_reducer('mean',np.mean)
-extractor.add_reducer('std', np.std)
-extractor.add_reducer('max', np.max)
-extractor.add_reducer('min', np.min)
-extractor.add_reducer('slope', ols_1000x, uses_time= True)
-extractor.add_reducer('mcr', mean_crossing_rate)
+if options.aggregate: 
+    extractor.add_reducer('std', np.std)
+    extractor.add_reducer('max', np.max)
+    extractor.add_reducer('min', np.min)
+    extractor.add_reducer('slope', ols_1000x, uses_time= True)
+    extractor.add_reducer('mcr', mean_crossing_rate)
 
-
-print "Args = ", args
-print "Options = ", options
 
  # file exists and 'finished' flag is true 
 def file_already_done(filename):

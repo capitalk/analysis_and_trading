@@ -19,22 +19,55 @@ def best_offer(orderBook):
 def midprice(orderBook):
     return (orderBook.offers[0].price + orderBook.bids[0].price) / 2 
 
-def timestamp(orderBook):
-    return orderBook.lastUpdateTime
+def total_added_volume(ob):
+    ob.compute_order_flow_stats()
+    return ob.added_volume 
+    
+def total_deleted_volume(ob):
+    ob.compute_order_flow_stats()
+    return ob.deleted_volume
+
+def net_volume(ob):
+    ob.compute_order_flow_stats()
+    return ob.added_volume - ob.deleted_volume
+
+def canceled_volume(ob):
+    ob.compute_order_flow_stats()
+    return ob.canceled_volume 
+    
+def fill_volume(ob):
+    ob.compute_order_flow_stats()
+    return ob.fill_volume 
+    
+def insertion_flow(ob):
+    ob.compute_order_flow_stats()
+    return ob.insertion_flow
+
+def millisecond_timestamp(orderBook): 
+    return orderBook.lastUpdateTime 
 
 def second_timestamp(orderBook):
-    t = orderBook.lastUpdateTime.time()
-    return int(t.hour * 3600 + t.minute * 60 + t.second)
+    return orderBook.lastUpdateTime / 1000.0
 
-def millisecond_timestamp(orderBook):
-    t = orderBook.lastUpdateTime.time()
-    return int(t.hour * 3600000 + t.minute * 60000 + t.second * 1000 + int(t.microsecond / 1000.0) )
+def message_count(orderBook):
+    return len(orderBook.actions)
 
-#def millisecond_timestamp_mod1000(orderBook):
+#def timestamp(orderBook):
+    #return orderBook.lastUpdateTime
     
-def microsecond_timestamp(orderBook): 
-    t = orderBook.lastUpdateTime.time()
-    return second_timestamp(orderBook)*1000000 + t.microsecond
+#def second_timestamp(orderBook):
+    #t = orderBook.lastUpdateTime.time()
+    #return int(t.hour * 3600 + t.minute * 60 + t.second)
+
+#def millisecond_timestamp(orderBook):
+    #t = orderBook.lastUpdateTime.time()
+    #return int(t.hour * 3600000 + t.minute * 60000 + t.second * 1000 + int(t.microsecond / 1000.0) )
+
+##def millisecond_timestamp_mod1000(orderBook):
+    
+#def microsecond_timestamp(orderBook): 
+    #t = orderBook.lastUpdateTime.time()
+    #return second_timestamp(orderBook)*1000000 + t.microsecond
 
 # cache results 
 def bid_volume(orderBook): 
