@@ -35,6 +35,7 @@ if __name__ == "__main__":
     parser = OptionParser()
     parser.add_option("-f", "--create-buckets", action='store_true', dest="create_buckets", help="Create buckets on s3 if they don't exist now", default=False)
     parser.add_option("-q", "--queue", dest="queue", help="SQS queue name", default="inq")
+    parser.add_option("-n", "--noqueue", dest="donotqueue", help="Upload only - don't queue", default=False)
     (options, args) = parser.parse_args()
 
     if len(args) < 1:
@@ -42,7 +43,7 @@ if __name__ == "__main__":
         sys.exit()
         exit(-1)
 
-    if options.queue is None:
+    if options.queue is None and options.donotqueue is False:
         print __doc__
         exit(-1)
 
@@ -94,9 +95,11 @@ if __name__ == "__main__":
         else:
             print "Uploading: ", f
             s3_multipart_upload.main(f, bucket_name)         
-
-        m = MHMessage()
-        m['input_file'] = os.path.basename(f)
-        m['bucket'] = bucket_name
-        print "Queueing message" , m.get_body(), " ==> ", options.queue
-        q.write(m)
+            if options.donotqueue is False:
+                m = MHMessage()
+                m['input_file'] = os.path.basename(f)
+                m['bucket'] = bucket_name
+                print "Queueing message" , m.get_body(), " ==> ", options.queue
+                q.write(m)
+            else : 
+                print "Skipping message queueing"
