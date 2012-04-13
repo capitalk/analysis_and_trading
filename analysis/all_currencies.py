@@ -104,7 +104,7 @@ import glob
 from dataset import Dataset 
 from dataset_helpers import hour_to_idx
 
-def load_pairwise_tensor(path, fn, reciprocal_fn, diagonal, start_hour = 12, end_hour = 20):
+def load_pairwise_tensor(path, fn, reciprocal_fn, diagonal, start_hour = 1, end_hour = 20):
     currencies = set([])
     vectors = {}
     nticks = None
@@ -122,6 +122,7 @@ def load_pairwise_tensor(path, fn, reciprocal_fn, diagonal, start_hour = 12, end
         vectors[ (ccy_b, ccy_a) ] = reciprocal_fn(d)[start_idx:end_idx]
 
     clique = list(maximum_clique(currencies, vectors))
+    
     n = len(clique)
     result = np.zeros( [n,n, nticks], dtype='float')
     for i in xrange(n):
@@ -135,12 +136,14 @@ def load_pairwise_tensor(path, fn, reciprocal_fn, diagonal, start_hour = 12, end
     return clique, result, currencies, vectors 
     
 
-def load_pairwise_rates_from_path(path, start_hour=12, end_hour=20):
+def load_pairwise_rates_from_path(path, start_hour=1, end_hour=20):
     fn1 = lambda d: d['bid/100ms']
     fn2 = lambda d: 1.0/d['offer/100ms']
-    return load_pairwise_tensor(path, fn1, fn2, 1.0, start_hour, end_hour)
+    clique, data, _, _ = \
+      load_pairwise_tensor(path, fn1, fn2, 1.0, start_hour, end_hour)
+    return clique, data 
 
-def load_pairwise_message_counts_from_path(path, start_hour = 12, end_hour = 20):
+def load_pairwise_message_counts_from_path(path, start_hour = 1, end_hour = 20):
     fn = lambda d: d['message_count/100ms']
     return load_pairwise_tensor(path, fn, fn, 0, start_hour, end_hour)
     
@@ -224,10 +227,13 @@ def difference_from_ideal_rate(rates, values):
 
 
 
-def load_pairwise_features_from_path(path, signal = signals.bid_offer_cross, start_hour=12, end_hour=22):
-    
+def load_pairwise_features_from_path(
+      path, 
+      signal = signals.bid_offer_cross, 
+      start_hour=1, end_hour=20):
     print "Searching for maximum clique"
-    clique, clique_rates, _, _ = load_pairwise_rates_from_path(path, start_hour, end_hour)
+    clique, clique_rates = \
+      load_pairwise_rates_from_path(path, start_hour, end_hour)
     
     clique_size = len(clique)
     print "Found clique of size", clique_size, ":",  clique 
@@ -236,7 +242,8 @@ def load_pairwise_features_from_path(path, signal = signals.bid_offer_cross, sta
     n_pair_features = 3 
     n_pairs = (clique_size-1) * (clique_size-2)
     n_features = n_scales * (clique_size + n_pairs * n_pair_features)
-    print "Computing", n_features, "features for", n_pairs, "currency pairs over", n_scales, "time scales"
+    print "Computing", n_features, "features for", \
+      n_pairs, "currency pairs over", n_scales, "time scales"
     feature_list = []
     multiscale_feature_list = [] 
     
@@ -245,7 +252,8 @@ def load_pairwise_features_from_path(path, signal = signals.bid_offer_cross, sta
     ccy_values = ccy_value_eig(clique_rates)
     
     for i in xrange(clique_size):       
-        gradients = filter.multiscale_exponential_gradients(ccy_values[i, :], n_scales = n_scales)
+        gradients = \
+          filter.multiscale_exponential_gradients(ccy_values[i, :], n_scales = n_scales)
         feature_list.append(gradients[0, :])
         for scale in xrange(n_scales):
             multiscale_feature_list.append(gradients[scale, :])
@@ -259,7 +267,8 @@ def load_pairwise_features_from_path(path, signal = signals.bid_offer_cross, sta
 
             diff = midprice - ideal_midprice
             feature_list.append(diff)
-            smoothed = filter.multiscale_exponential_smoothing(diff, n_scales = n_scales)
+            smoothed = \
+              filter.multiscale_exponential_smoothing(diff, n_scales = n_scales)
             for scale in xrange(n_scales):
                 multiscale_feature_list.append(smoothed[scale, :])
             
@@ -313,7 +322,122 @@ def load_pairwise_features_from_path(path, signal = signals.bid_offer_cross, sta
     multiscale_features = np.array(multiscale_feature_list).T
     signals = np.array(signals, dtype='int')
     return simple_features, multiscale_features, signals 
-            
+   
+def load_clique_values_from_path(path, start_hour=1, end_hour=20):
+	print "Searching for maximum clique..."
+	clique, rates = load_pairwise_rates_from_path(path, start_hour, end_hour)
+	print "Found", clique, " ( length = ", len(clique), ")"
+	print "Computing currency values..." 
+	values = ccy_value_eig(rates)
+	return values, clique, rates 
+
+def returns(values, lag):
+	present = values[:, :-lag]
+	future = values[:, lag:]
+	return np.log(future / present)
+
+def present_and_future_returns(values, past_lag, future_lag=None): 
+    if future_lag is None:
+		future_lag = past_lag
+    past_returns = returns(values, past_lag)
+    future_returns = returns(values, future_lag)
+    present = past_returns[:, :-future_lag]
+    future = future_returns[:, past_lag:]
+    return present, future 	
+
+def make_returns_dataset(values, past_lag, future_lag = None, predict_idx=0, train_prct = 0.6):
+	if future_lag is None:
+		future_lag = past_lag
+	x, ys = \
+	  present_and_future_returns(values, past_lag, future_lag)
+	y = ys[predict_idx, :]
+	n = len(y)
+	ntrain = int(train_prct * n)
+	ntest = n - ntrain 
+	xtrain = x[:, :ntrain]
+	xtest = x[:, ntrain:]
+	ytrain = y[:ntrain]
+	ytest = y[ntrain:]
+	return xtrain, xtest, ytrain, ytest 
+
+import sklearn 
+import sklearn.linear_model
+
+def eval_results(y, pred):
+	mad = np.mean(np.abs(y-pred))
+	mad_ratio = mad/ np.mean( np.abs(y) )
+	prct_same_sign = np.mean(np.sign(y) == np.sign(pred))
+	return mad, mad_ratio, prct_same_sign
+
+def eval_returns_regression(values, past_lag, future_lag = None, predict_idx=0, train_prct=0.5):
+	
+	if future_lag is None:
+		future_lag = past_lag
+	
+	xtrain, xtest, ytrain, ytest = \
+	  make_returns_dataset(values, past_lag, future_lag, predict_idx, train_prct)
+	
+	lr = sklearn.linear_model.LinearRegression(copy_X=False, normalize=True)
+	
+	lr.fit(xtrain.T, ytrain)
+	pred = lr.predict(xtest.T)
+	return  eval_results(ytest, pred)
+
+def param_search(values, predict_idx = 0, dataset_start_hour=1):
+	
+	# data I was using only went up to 20th hour, assume each slice
+	# is 3 hours long 
+	last_hour = 19
+	dur_hours = 3 
+	ticks_per_second = 10 
+	start_hours = np.arange(last_hour - dur_hours)
+	# every 5 seconds 
+	lags = [4, 8, 16, 32, 64, 128]
+	nlags = len(lags)
+	same_sign_results = []
+	mad_ratio_results = []
+	best_score = 0
+	best_data = None 
+	
+	for start_hour in start_hours:
+		# 1 + the hour since we're assume 
+		real_start_hour = dataset_start_hour+start_hour
+		print "---- Start Hour:", real_start_hour, "---"
+		end_hour = start_hour + dur_hours
+		multiplier = ticks_per_second * 60 * 60
+		start_tick = start_hour * multiplier
+		end_tick = end_hour * multiplier 
+		slice_values = values[:, start_tick:end_tick]
+		score_result = np.zeros( (nlags, nlags) )
+		mr_result = np.zeros ( (nlags, nlags))
+		for i, past_lag in enumerate(lags):
+			for j, future_lag in enumerate(lags):
+				mad, mr, prct_same_sign = \
+				  eval_returns_regression(slice_values, past_lag, future_lag, 2)
+				print "Past_Lag =", past_lag, \
+				  "| Future_Lag =", future_lag, \
+				  "| mad =", mad, \
+				  "| mad_ratio=", mr, \
+				  "| same_sign=", prct_same_sign  
+				score_result[i,j] = prct_same_sign
+				mr_result[i,j] = mr
+				if best_score < prct_same_sign:
+					best_score = prct_same_sign
+					best_data = { 
+					  'start_hour': real_start_hour, 
+					  'past_lag': past_lag, 
+					  'future_lag': future_lag, 
+					  'mad': mad, 
+					  'mad_ratio': mr, 
+					  'prct_same_sign': prct_same_sign
+					}
+		same_sign_results.append(score_result)	
+		mad_ratio_results.append(mr_result)
+	return best_score, best_data, same_sign_results, mad_ratio_results
+	
+	
+	
+	
         
         
         
