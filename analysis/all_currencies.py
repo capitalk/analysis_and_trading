@@ -339,17 +339,38 @@ def returns(values, lag):
 def present_and_future_returns(values, past_lag, future_lag=None): 
     if future_lag is None:
 		future_lag = past_lag
-    past_returns = returns(values, past_lag)
-    future_returns = returns(values, future_lag)
-    present = past_returns[:, :-future_lag]
-    future = future_returns[:, past_lag:]
-    return present, future 	
+    past_returns = np.log(  values[:, past_lag:] / values[:, :-past_lag])
+    # truncate past_returns 
+    past_returns = past_returns[:, :-future_lag]
+    future_returns = np.log ( values[:, (past_lag+future_lag):] / values[:, past_lag:-future_lag])
+    return past_returns, future_returns
 
-def make_returns_dataset(values, past_lag, future_lag = None, predict_idx=0, train_prct = 0.6):
+
+# like a geometric mean but also works for negative numbers
+def normalized_product(vi, vj): 
+	return np.sign(vi) * np.sign(vj) * np.sqrt(np.abs(vi) * np.abs(vj))
+
+def transform_pairwise(x, fn = normalized_product):
+	d,n = x.shape
+	new_features = []
+	for i in range(d):
+		vi = x[i, :]
+		new_features.append(vi)
+		for j in range(d):
+			if i <= j:
+				vj = x[j, :]
+				new_features.append(fn(vi, vj))
+	return np.array(new_features)
+	
+def make_returns_dataset(values, past_lag, future_lag = None, predict_idx=0, train_prct = 0.65, pairwise_fn=None, values_are_features=False):
 	if future_lag is None:
 		future_lag = past_lag
 	x, ys = \
 	  present_and_future_returns(values, past_lag, future_lag)
+	if pairwise_fn is not None:
+		x = transform_pairwise(x, pairwise_fn)
+	if values_are_features:
+		x = np.vstack( [values[:, past_lag:-future_lag], x] ) 
 	y = ys[predict_idx, :]
 	n = len(y)
 	ntrain = int(train_prct * n)
@@ -362,6 +383,7 @@ def make_returns_dataset(values, past_lag, future_lag = None, predict_idx=0, tra
 
 import sklearn 
 import sklearn.linear_model
+import sklearn.tree 
 
 def eval_results(y, pred):
 	mad = np.mean(np.abs(y-pred))
@@ -369,30 +391,36 @@ def eval_results(y, pred):
 	prct_same_sign = np.mean(np.sign(y) == np.sign(pred))
 	return mad, mad_ratio, prct_same_sign
 
-def eval_returns_regression(values, past_lag, future_lag = None, predict_idx=0, train_prct=0.5):
-	
+import treelearn 
+def eval_returns_regression(values, past_lag, future_lag = None, predict_idx=0, train_prct=0.5, pairwise_fn = None, values_are_features=False):
 	if future_lag is None:
 		future_lag = past_lag
 	
 	xtrain, xtest, ytrain, ytest = \
-	  make_returns_dataset(values, past_lag, future_lag, predict_idx, train_prct)
+	  make_returns_dataset(values, past_lag, future_lag, predict_idx, train_prct, pairwise_fn = pairwise_fn, values_are_features = values_are_features)
+	#model = sklearn.tree.DecisionTreeRegressor(max_depth=20, min_split=7)
+	#model = sklearn.linear_model.LinearRegression(copy_X=False)
+	model = sklearn.linear_model.OrthogonalMatchingPursuit(n_nonzero_coefs=8, copy_X=False)
+	model.fit(xtrain.T, ytrain)
 	
-	lr = sklearn.linear_model.LinearRegression(copy_X=False, normalize=True)
+	#model = treelearn.train_clustered_regression_ensemble(xtrain.T, ytrain, num_models=100, k=25, bagging_percent=0.75, feature_subset_percent=0.75)
 	
-	lr.fit(xtrain.T, ytrain)
-	pred = lr.predict(xtest.T)
-	return  eval_results(ytest, pred)
+	
+	pred = model.predict(xtest.T)
+	mad, mr, p = eval_results(ytest, pred)
+	return mad, mr, p, ytest, pred 
 
-def param_search(values, predict_idx = 0, dataset_start_hour=1):
+import sys
+
+def param_search(values, predict_idx = 0, values_are_features = False, pairwise_fn = None, dataset_start_hour=1, dataset_end_hour=20):
 	
 	# data I was using only went up to 20th hour, assume each slice
 	# is 3 hours long 
-	last_hour = 19
-	dur_hours = 3 
+	last_hour = dataset_end_hour - dataset_start_hour 
+	dur_hours = 2
 	ticks_per_second = 10 
 	start_hours = np.arange(last_hour - dur_hours)
-	# every 5 seconds 
-	lags = [4, 8, 16, 32, 64, 128]
+	lags = ticks_per_second * np.array([10, 20, 40, 60, 80, 100, 200, 300, 400, 500, 600])
 	nlags = len(lags)
 	same_sign_results = []
 	mad_ratio_results = []
@@ -401,38 +429,45 @@ def param_search(values, predict_idx = 0, dataset_start_hour=1):
 	
 	for start_hour in start_hours:
 		# 1 + the hour since we're assume 
-		real_start_hour = dataset_start_hour+start_hour
+		real_start_hour = dataset_start_hour + start_hour
 		print "---- Start Hour:", real_start_hour, "---"
+		if best_data: print "Best so far:", best_score, best_data 
 		end_hour = start_hour + dur_hours
 		multiplier = ticks_per_second * 60 * 60
 		start_tick = start_hour * multiplier
 		end_tick = end_hour * multiplier 
 		slice_values = values[:, start_tick:end_tick]
-		score_result = np.zeros( (nlags, nlags) )
-		mr_result = np.zeros ( (nlags, nlags))
-		for i, past_lag in enumerate(lags):
-			for j, future_lag in enumerate(lags):
-				mad, mr, prct_same_sign = \
-				  eval_returns_regression(slice_values, past_lag, future_lag, 2)
-				print "Past_Lag =", past_lag, \
-				  "| Future_Lag =", future_lag, \
-				  "| mad =", mad, \
-				  "| mad_ratio=", mr, \
-				  "| same_sign=", prct_same_sign  
-				score_result[i,j] = prct_same_sign
-				mr_result[i,j] = mr
-				if best_score < prct_same_sign:
-					best_score = prct_same_sign
-					best_data = { 
-					  'start_hour': real_start_hour, 
-					  'past_lag': past_lag, 
-					  'future_lag': future_lag, 
-					  'mad': mad, 
-					  'mad_ratio': mr, 
-					  'prct_same_sign': prct_same_sign
-					}
+		score_result = np.zeros(nlags )
+		mr_result = np.zeros(nlags)
+		
+ 		for i, lag in enumerate(lags):
+			mad, mr, prct_same_sign, y, pred = \
+			  eval_returns_regression(slice_values, lag, predict_idx=predict_idx, pairwise_fn = pairwise_fn, values_are_features=values_are_features)
+			print "Lag =", lag /10, \
+				"| mean change =", np.mean(y), \
+				"| mean predicted =", np.mean(pred), \
+				"| mad =", mad, \
+				"| mad_ratio =", mr, \
+				"| same_sign =", prct_same_sign
+
+			sys.stdout.flush()
+			score_result[i] = prct_same_sign
+			mr_result[i] = mr
+			score = prct_same_sign**2 * (1.0/mr)
+			if best_score < score:
+				best_score = score
+				best_data = { 
+					'start_hour': real_start_hour, 
+					'lag': lag / 10, 
+					'mad': mad, 
+					'mad_ratio': mr, 
+					'prct_same_sign': prct_same_sign, 
+					'y_test': y, 
+					'y_pred': pred, 
+				}
 		same_sign_results.append(score_result)	
 		mad_ratio_results.append(mr_result)
+	print "Best overall:", best_score, best_data 
 	return best_score, best_data, same_sign_results, mad_ratio_results
 	
 	
