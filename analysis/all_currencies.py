@@ -6,68 +6,6 @@ import filter
 import features 
 import signals 
 
-def best_regression_lags(x, min_lag = 3, 
-                            n_lags = 10,
-                            num_clusters = 10, 
-                            multiplier = 10000,
-                            min_move_size = 1.5, 
-                            train_prct = 0.65):
-    lags = np.arange(n_lags)+min_lag 
-    n_rows, n_cols = x.shape 
-    train_idx = int(train_prct * n_rows)
-    n_test = n_rows - train_idx 
-    
-    init_dict = { 'score': 0 }
-    best = [init_dict] * n_cols 
-    
-    
-    for past_offset in lags:
-        past = x[:-past_offset, :]
-        present = x[past_offset:, :] 
-        past_delta_prct = (present - past) / past 
-        inputs = np.zeros(x.shape)
-        inputs[past_offset:,:] = past_delta_prct * multiplier 
-        input_train = inputs[:train_idx, :]
-        input_test = inputs[train_idx:, :] 
-        for future_offset in lags:
-            
-            print "past_offset = ", past_offset, " future_offset=", future_offset
-            present = x[:-future_offset, :]
-            future = x[future_offset:, :]
-            future_delta_prct = (future - present) / present
-            outputs = np.zeros(x.shape)
-            outputs[:-future_offset, :] = future_delta_prct * multiplier
-            output_train = outputs[:train_idx, :]
-            output_test = outputs[train_idx:, :] 
-            for ccy_idx in xrange(n_cols):
-                if num_clusters == 1:
-                    model = LinearRegression()
-                else:
-                    model = ClusteredRegression(num_clusters)
-                target = output_train[:, ccy_idx]
-                model.fit(input_train, target)
-                pred = model.predict(input_test)
-                actual = output_test[:, ccy_idx]
-                actual_big_moves = np.abs(actual) > min_move_size
-                num_big_moves = np.sum(actual_big_moves)
-                if num_big_moves > 0:
-                    pred_big_moves = np.abs(pred) > 0.5 * min_move_size
-                    same_sign = np.sign(actual) == np.sign(pred)
-                    correct = actual_big_moves & pred_big_moves & same_sign 
-                    score = np.sum(correct, dtype='float') / num_big_moves
-                    mean_abs_err = np.mean(np.abs(pred - actual))
-                    print "         currency ", ccy_idx, "score = ",  score, "mae = ", mean_abs_err 
-                    if score > best[ccy_idx]['score']:
-                        best[ccy_idx] = { 
-                            'score':score, 
-                            'mean_abs_err': mean_abs_err,  
-                            'model': model, 
-                            'past_offset':past_offset, 
-                            'future_offset':future_offset, 
-                        }
-    return best 
-            
-
 
 def powerset(seq):
     if isinstance(seq, set):
@@ -104,7 +42,7 @@ import glob
 from dataset import Dataset 
 from dataset_helpers import hour_to_idx
 
-def load_pairwise_tensor(path, fn, reciprocal_fn, diagonal, start_hour = 1, end_hour = 20):
+def load_pairwise_tensor(path, fn, reciprocal_fn, diagonal, start_hour = 1, end_hour = 20, expect_clique = None):
     currencies = set([])
     vectors = {}
     nticks = None
@@ -125,6 +63,7 @@ def load_pairwise_tensor(path, fn, reciprocal_fn, diagonal, start_hour = 1, end_
     
     n = len(clique)
     result = np.zeros( [n,n, nticks], dtype='float')
+    print 'tensor', result.shape
     for i in xrange(n):
         ccy_a = clique[i] 
         for j in xrange(n):
@@ -133,14 +72,19 @@ def load_pairwise_tensor(path, fn, reciprocal_fn, diagonal, start_hour = 1, end_
             else: 
                 ccy_b = clique[j]
                 result[i,j, :] = vectors[ (ccy_a, ccy_b) ] 
-    return clique, result, currencies, vectors 
+	if expect_clique is not None:
+		assert set(clique) == set(expect_clique)
+		permute = np.array([expect_clique.index(ccy) for ccy in clique])
+		result = result[permute, :]
+		clique = expect_clique 
+	return clique, result, currencies, vectors 
     
 
-def load_pairwise_rates_from_path(path, start_hour=1, end_hour=20):
+def load_pairwise_rates_from_path(path, start_hour=1, end_hour=20, expect_clique=None):
     fn1 = lambda d: d['bid/100ms']
     fn2 = lambda d: 1.0/d['offer/100ms']
     clique, data, _, _ = \
-      load_pairwise_tensor(path, fn1, fn2, 1.0, start_hour, end_hour)
+      load_pairwise_tensor(path, fn1, fn2, 1.0, start_hour, end_hour, expect_clique = expect_clique)
     return clique, data 
 
 def load_pairwise_message_counts_from_path(path, start_hour = 1, end_hour = 20):
@@ -227,105 +171,11 @@ def difference_from_ideal_rate(rates, values):
 
 
 
-def load_pairwise_features_from_path(
-      path, 
-      signal = signals.bid_offer_cross, 
-      start_hour=1, end_hour=20):
-    print "Searching for maximum clique"
-    clique, clique_rates = \
-      load_pairwise_rates_from_path(path, start_hour, end_hour)
-    
-    clique_size = len(clique)
-    print "Found clique of size", clique_size, ":",  clique 
-    
-    n_scales = 4
-    n_pair_features = 3 
-    n_pairs = (clique_size-1) * (clique_size-2)
-    n_features = n_scales * (clique_size + n_pairs * n_pair_features)
-    print "Computing", n_features, "features for", \
-      n_pairs, "currency pairs over", n_scales, "time scales"
-    feature_list = []
-    multiscale_feature_list = [] 
-    
-    # add currency value gradients to features 
-    print "Computing currency values from principal eigenvectors of rate matrices (with shape", clique_rates.shape, ")"
-    ccy_values = ccy_value_eig(clique_rates)
-    
-    for i in xrange(clique_size):       
-        gradients = \
-          filter.multiscale_exponential_gradients(ccy_values[i, :], n_scales = n_scales)
-        feature_list.append(gradients[0, :])
-        for scale in xrange(n_scales):
-            multiscale_feature_list.append(gradients[scale, :])
-    
-    # compute difference from ideal rates 
-    pair_counter = 0
-    for i in xrange(clique_size):
-        for j in np.arange(clique_size-i-1)+i+1:
-            ideal_midprice = ccy_values[i, :] / ccy_values[j, :]
-            midprice = 0.5*clique_rates[i,j,:] + 0.5/clique_rates[j,i,:]
-
-            diff = midprice - ideal_midprice
-            feature_list.append(diff)
-            smoothed = \
-              filter.multiscale_exponential_smoothing(diff, n_scales = n_scales)
-            for scale in xrange(n_scales):
-                multiscale_feature_list.append(smoothed[scale, :])
-            
-    
-    
-    signals = []
-    for filename in glob.glob(path):
-        d = Dataset(filename)
-        ccy_a, ccy_b = d.currency_pair 
-        if ccy_a in clique and ccy_b in clique:
-            start_idx = hour_to_idx(d.t, start_hour)
-            end_idx = hour_to_idx(d.t, end_hour)
-            
-            print 
-            print "Getting features for", d.currency_pair 
-            print 
-            print "Bid side slope"
-            bss = features.bid_side_slope(d, start_idx, end_idx)
-            feature_list.append(bss)
-            smoothed = filter.multiscale_exponential_smoothing(bss, n_scales = n_scales)
-            for scale in xrange(n_scales):
-                multiscale_feature_list.append(smoothed[scale, :])
-            
-            print "Offer side slope"
-            oss = features.offer_side_slope(d, start_idx, end_idx)
-            feature_list.append(oss)
-            smoothed = filter.multiscale_exponential_smoothing(oss, n_scales = n_scales)
-            for scale in xrange(n_scales):
-                multiscale_feature_list.append(smoothed[scale, :])
-            
-            
-            print "Message count"
-            msgs = d['message_count/100ms'][start_idx:end_idx]
-            feature_list.append(msgs)
-            smoothed_message_counts = filter.multiscale_exponential_smoothing(msgs, n_scales = n_scales)
-            for scale in xrange(n_scales):
-                multiscale_feature_list.append(smoothed_message_counts[scale, :])
-            
-            print "Computing output signal for", d.currency_pair  
-            y = signal(d, start_idx = start_idx, end_idx = end_idx)
-            signals.append(y)
-    # assuming d, start_idx, end_idx are still bound 
-    print "Time" 
-    t = d['t'][start_idx:end_idx] / (3600.0 * 1000 * 24)
-    feature_list.append(t)
-    multiscale_feature_list.append(t)
-            
-    print 
-    print "Concatenating results"
-    simple_features = np.array(feature_list).T
-    multiscale_features = np.array(multiscale_feature_list).T
-    signals = np.array(signals, dtype='int')
-    return simple_features, multiscale_features, signals 
    
-def load_clique_values_from_path(path, start_hour=1, end_hour=20):
+def load_clique_values_from_path(path, start_hour=1, end_hour=20, expect_clique=None):
 	print "Searching for maximum clique..."
-	clique, rates = load_pairwise_rates_from_path(path, start_hour, end_hour)
+	clique, rates = load_pairwise_rates_from_path(path, start_hour, end_hour, expect_clique)
+	print rates.shape
 	print "Found", clique, " ( length = ", len(clique), ")"
 	print "Computing currency values..." 
 	values = ccy_value_eig(rates)
@@ -362,28 +212,11 @@ def transform_pairwise(x, fn = normalized_product):
 				new_features.append(fn(vi, vj))
 	return np.array(new_features)
 	
-def make_returns_dataset(values, past_lag, future_lag = None, predict_idx=0, train_prct = 0.65, pairwise_fn=None, values_are_features=False):
-	if future_lag is None:
-		future_lag = past_lag
-	x, ys = \
-	  present_and_future_returns(values, past_lag, future_lag)
-	if pairwise_fn is not None:
-		x = transform_pairwise(x, pairwise_fn)
-	if values_are_features:
-		x = np.vstack( [values[:, past_lag:-future_lag], x] ) 
-	y = ys[predict_idx, :]
-	n = len(y)
-	ntrain = int(train_prct * n)
-	ntest = n - ntrain 
-	xtrain = x[:, :ntrain]
-	xtest = x[:, ntrain:]
-	ytrain = y[:ntrain]
-	ytest = y[ntrain:]
-	return xtrain, xtest, ytrain, ytest 
 
 import sklearn 
 import sklearn.linear_model
 import sklearn.tree 
+import sklearn.svm 
 
 def eval_results(y, pred):
 	mad = np.mean(np.abs(y-pred))
@@ -398,12 +231,22 @@ def eval_returns_regression(values, past_lag, future_lag = None, predict_idx=0, 
 	
 	xtrain, xtest, ytrain, ytest = \
 	  make_returns_dataset(values, past_lag, future_lag, predict_idx, train_prct, pairwise_fn = pairwise_fn, values_are_features = values_are_features)
+	
+	avg_output = np.mean(np.abs(ytrain))
+	avg_input = np.mean(np.abs(xtrain))
+	n_features = xtrain.shape[0]
+	model = sklearn.ensemble.ExtraTreesRegressor(100)
+	#model = sklearn.linear_model.OrthogonalMatchingPursuit(n_nonzero_coefs=8, copy_X=False)
+	#model = sklearn.svm.SVR(kernel='linear', epsilon=0.001 * avg_output, gamma=avg_input/n_features, scale_C = True)
 	#model = sklearn.tree.DecisionTreeRegressor(max_depth=20, min_split=7)
-	#model = sklearn.linear_model.LinearRegression(copy_X=False)
-	model = sklearn.linear_model.OrthogonalMatchingPursuit(n_nonzero_coefs=8, copy_X=False)
+	#model = sklearn.linear_model.LinearRegression(copy_X=True)
+	#model = sklearn.linear_model.Ridge(alpha=avg_output)
+	
 	model.fit(xtrain.T, ytrain)
 	
-	#model = treelearn.train_clustered_regression_ensemble(xtrain.T, ytrain, num_models=100, k=25, bagging_percent=0.75, feature_subset_percent=0.75)
+	#model = treelearn.train_clustered_regression_ensemble(xtrain.T, ytrain, num_models=100, k=25, bagging_percent=0.75, feature_subset_percent=1.0)
+	#model = treelearn.train_random_forest(xtrain.T, ytrain)
+	#model = treelearn.train_clustered_ols(xtrain.T, ytrain)
 	
 	
 	pred = model.predict(xtest.T)
@@ -412,66 +255,138 @@ def eval_returns_regression(values, past_lag, future_lag = None, predict_idx=0, 
 
 import sys
 
-def param_search(values, predict_idx = 0, values_are_features = False, pairwise_fn = None, dataset_start_hour=1, dataset_end_hour=20):
-	
-	# data I was using only went up to 20th hour, assume each slice
-	# is 3 hours long 
-	last_hour = dataset_end_hour - dataset_start_hour 
-	dur_hours = 2
-	ticks_per_second = 10 
-	start_hours = np.arange(last_hour - dur_hours)
-	lags = ticks_per_second * np.array([10, 20, 40, 60, 80, 100, 200, 300, 400, 500, 600])
-	nlags = len(lags)
-	same_sign_results = []
-	mad_ratio_results = []
-	best_score = 0
-	best_data = None 
-	
-	for start_hour in start_hours:
-		# 1 + the hour since we're assume 
-		real_start_hour = dataset_start_hour + start_hour
-		print "---- Start Hour:", real_start_hour, "---"
-		if best_data: print "Best so far:", best_score, best_data 
-		end_hour = start_hour + dur_hours
-		multiplier = ticks_per_second * 60 * 60
-		start_tick = start_hour * multiplier
-		end_tick = end_hour * multiplier 
-		slice_values = values[:, start_tick:end_tick]
-		score_result = np.zeros(nlags )
-		mr_result = np.zeros(nlags)
-		
- 		for i, lag in enumerate(lags):
-			mad, mr, prct_same_sign, y, pred = \
-			  eval_returns_regression(slice_values, lag, predict_idx=predict_idx, pairwise_fn = pairwise_fn, values_are_features=values_are_features)
-			print "Lag =", lag /10, \
-				"| mean change =", np.mean(y), \
-				"| mean predicted =", np.mean(pred), \
-				"| mad =", mad, \
-				"| mad_ratio =", mr, \
-				"| same_sign =", prct_same_sign
+from scipy import stats
 
-			sys.stdout.flush()
-			score_result[i] = prct_same_sign
-			mr_result[i] = mr
-			score = prct_same_sign**2 * (1.0/mr)
-			if best_score < score:
-				best_score = score
-				best_data = { 
-					'start_hour': real_start_hour, 
-					'lag': lag / 10, 
-					'mad': mad, 
-					'mad_ratio': mr, 
-					'prct_same_sign': prct_same_sign, 
-					'y_test': y, 
-					'y_pred': pred, 
-				}
-		same_sign_results.append(score_result)	
-		mad_ratio_results.append(mr_result)
-	print "Best overall:", best_score, best_data 
-	return best_score, best_data, same_sign_results, mad_ratio_results
+def inputs_from_values(v, lag1, lag2, future_offset, thresh_percentile, pairwise_products=False):
+	returns1 = np.log(v[:, lag1:] / v[:, :-lag1])
+	returns2 = np.log(v[:, lag2:] / v[:, :-lag2])
+	# align to make returns the same length
+	if lag1 < lag2:
+		returns1 = returns1[:, (lag2 - lag1):]
+	else:
+		returns2 = returns2[:, (lag1 - lag2):]
+	# truncate past so it aligns with vector of future returns 
+	returns1 = returns1[:, :-future_offset]
+	returns2 = returns2[:, :-future_offset]
+	returns = np.vstack([returns1, returns2])
+	n_base_features = returns.shape[0]
+	n_samples = returns.shape[1]
 	
+	features = np.zeros( (2*n_base_features, n_samples), dtype='float')
+	for i in xrange(n_base_features):
+		row = returns[i, :]
+		bottom_thresh = stats.scoreatpercentile(row, thresh_percentile)
+		top_thresh = stats.scoreatpercentile(row, 100 - thresh_percentile)
+		features[2*i, :] = row < bottom_thresh
+		features[2*i+1, :] = row > top_thresh
+
+	if pairwise_products:
+		return transform_pairwise(features, fn = np.multiply)
+	else:
+		return features 
+
+#assumes 1d output 
+def outputs_from_values(v, future_offset, past_lag, thresh_percentile):
+	returns = np.log ( v[:, (past_lag+future_offset):] / values[:, past_lag:-future_offset])
+	result = np.zeros_like(returns, dtype='int')
+	bottom_thresh = stats.scoreatpercentile(returns, thresh_percentile)
+	top_thresh = stats.scoreatpercentile(returns, 100 - thresh_percentile)
+	result[returns < bottom_thresh] = -1 
+	result[returns > top_thresh] = 1 
+	return result 
+										
 	
-	
+def f_score(precision, receall, beta=1.0):
+	top = precision * recall
+	beta_squared = beta * beta 
+	bottom = beta_squared * precision + recall 
+	return (1 + beta_squared) * (top / bottom)
+
+
+from collections import OrderedDict, namedtuple 
+
+def param_search(training_days, testing_days, predict_idx = 0, \
+		percentiles=[2,5,10,20], 
+		lags=[10, 20, 50, 100, 200, 400], beta = 0.5):
+	Params = namedtuple('Params', \
+		'long_lag', 'short_lag', 'future_lag',  \
+		'input_threshold_percentile', 'output_threshold_percentile', 
+		'combine_inputs')
+	Result = namedtuple('Result', 
+		'score', 'precision', 'recall', 
+		'sensitivity', 'specificity',
+		'y', 'ypred', 'model')
+	best_params = None
+	best_result = None
+	best_score = 0
+	for long_lag in lags:
+		for short_lag in [l for l in lags if l < long_lag]:
+			for future_lag in lags:
+				for input_threshold_percentile in percentiles:
+					for output_threshold_percentile in percentiles:
+						for combine_inputs in [True, False]:
+							def make_inputs(days):
+								return np.hstack([
+									inputs_from_values(day, 
+										lag1 = long_lag, lag2 = short_lag, 
+										future_offset = future_lag, 
+										thresh_percentile = input_threshold_percentile, 
+										combine_inputs = combine_inputs)
+									for day in days])
+							def make_outputs(days):
+								return np.hstack([
+									outputs_from_values(day, 
+										future_offset = future_lag,
+										past_lag = long_lag, 
+										thresh_percentile = output_threshold_percentile)
+									for day in days])
+							train_x = make_inputs(training_days)
+							train_y = make_outputs(training_days)
+							
+							test_x = make_inputs(testing_days)
+							test_y = make_outputs(testing_days)
+							
+							model = sklearn.linear_model.LogisticRegression(penalty='l1')
+							model.fit(train_x, train_y)
+							pred = model.predict(test_x)
+							
+							nonzero = test_y != 0
+							zero = test_y == 0
+							pred_nonzero = pred != 0
+							pred_zero = pred == 0
+							
+							total = len(pred)
+							tp = np.sum(nonzero & pred_nonzero)
+							tn = np.sum(zero & pred_zero)
+							fp = np.sum(nonzero & zero)
+							fn = total - (tp + tn + fp)
+							
+							sensitivity = tp / float(tp + fn)
+							specificity = tn / float(tn + fp)
+							precision = tp / float(tp + fp)
+							recall = tp / float (tp + fn)
+							score = f_score(precision, recall, beta)
+							
+							params = Params(long_lag, short_lag, future_lag,
+								input_threshold_percentile, 
+								output_threshold_percentile,
+								combine_inputs)
+								
+							result = Result(score, precision, recall, sensitivity, specificity, test_y, pred, model)
+							print params, result 
+							if score > best_score:
+								best_score = score
+								best_params = params
+								best_result = result 
+	print "Best score:", best_score
+	print "Best params:", best_params
+	print "Best result:", best_result 
+	return best_params, best_result 
+								
+							
+							
+			
+		 
 	
         
         
