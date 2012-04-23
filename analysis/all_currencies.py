@@ -72,12 +72,22 @@ def load_pairwise_tensor(path, fn, reciprocal_fn, diagonal, start_hour = 1, end_
             else: 
                 ccy_b = clique[j]
                 result[i,j, :] = vectors[ (ccy_a, ccy_b) ] 
-	if expect_clique is not None:
-		assert set(clique) == set(expect_clique)
-		permute = np.array([expect_clique.index(ccy) for ccy in clique])
-		result = result[permute, :]
-		clique = expect_clique 
-	return clique, result, currencies, vectors 
+
+    if expect_clique is not None:
+        assert set(clique) == set(expect_clique)
+        
+        permuted_result = np.zeros_like(result)
+        for i in xrange(n):
+            ccy_a = clique[i]
+            pi = expect_clique.index(ccy_a)
+            for j in xrange(n):
+                ccy_b = clique[j]
+                pj = expect_clique.index(ccy_b)
+                permuted_result[pi,pj,:] = result[i,j,:]
+                
+        result = permuted_result
+        clique = expect_clique 
+    return clique, result, currencies, vectors 
     
 
 def load_pairwise_rates_from_path(path, start_hour=1, end_hour=20, expect_clique=None):
@@ -173,22 +183,22 @@ def difference_from_ideal_rate(rates, values):
 
    
 def load_clique_values_from_path(path, start_hour=1, end_hour=20, expect_clique=None):
-	print "Searching for maximum clique..."
-	clique, rates = load_pairwise_rates_from_path(path, start_hour, end_hour, expect_clique)
-	print rates.shape
-	print "Found", clique, " ( length = ", len(clique), ")"
-	print "Computing currency values..." 
-	values = ccy_value_eig(rates)
-	return values, clique, rates 
+    print "Searching for maximum clique..."
+    clique, rates = load_pairwise_rates_from_path(path, start_hour, end_hour, expect_clique)
+    print rates.shape
+    print "Found", clique, " ( length = ", len(clique), ")"
+    print "Computing currency values..." 
+    values = ccy_value_eig(rates)
+    return values, clique, rates 
 
 def returns(values, lag):
-	present = values[:, :-lag]
-	future = values[:, lag:]
-	return np.log(future / present)
+    present = values[:, :-lag]
+    future = values[:, lag:]
+    return np.log(future / present)
 
 def present_and_future_returns(values, past_lag, future_lag=None): 
     if future_lag is None:
-		future_lag = past_lag
+        future_lag = past_lag
     past_returns = np.log(  values[:, past_lag:] / values[:, :-past_lag])
     # truncate past_returns 
     past_returns = past_returns[:, :-future_lag]
@@ -198,20 +208,20 @@ def present_and_future_returns(values, past_lag, future_lag=None):
 
 # like a geometric mean but also works for negative numbers
 def normalized_product(vi, vj): 
-	return np.sign(vi) * np.sign(vj) * np.sqrt(np.abs(vi) * np.abs(vj))
+    return np.sign(vi) * np.sign(vj) * np.sqrt(np.abs(vi) * np.abs(vj))
 
-def transform_pairwise(x, fn = normalized_product):
-	d,n = x.shape
-	new_features = []
-	for i in range(d):
-		vi = x[i, :]
-		new_features.append(vi)
-		for j in range(d):
-			if i <= j:
-				vj = x[j, :]
-				new_features.append(fn(vi, vj))
-	return np.array(new_features)
-	
+def transform_pairwise(x, fn = normalized_product, diagonal=False):
+    d,n = x.shape
+    new_features = []
+    for i in range(d):
+        vi = x[i, :]
+        new_features.append(vi)
+        for j in range(d):
+            if i < j or (diagonal and i == j):
+                vj = x[j, :]
+                new_features.append(fn(vi, vj))
+    return np.array(new_features)
+    
 
 import sklearn 
 import sklearn.linear_model
@@ -219,175 +229,233 @@ import sklearn.tree
 import sklearn.svm 
 
 def eval_results(y, pred):
-	mad = np.mean(np.abs(y-pred))
-	mad_ratio = mad/ np.mean( np.abs(y) )
-	prct_same_sign = np.mean(np.sign(y) == np.sign(pred))
-	return mad, mad_ratio, prct_same_sign
+    mad = np.mean(np.abs(y-pred))
+    mad_ratio = mad/ np.mean( np.abs(y) )
+    prct_same_sign = np.mean(np.sign(y) == np.sign(pred))
+    return mad, mad_ratio, prct_same_sign
 
 import treelearn 
 def eval_returns_regression(values, past_lag, future_lag = None, predict_idx=0, train_prct=0.5, pairwise_fn = None, values_are_features=False):
-	if future_lag is None:
-		future_lag = past_lag
-	
-	xtrain, xtest, ytrain, ytest = \
-	  make_returns_dataset(values, past_lag, future_lag, predict_idx, train_prct, pairwise_fn = pairwise_fn, values_are_features = values_are_features)
-	
-	avg_output = np.mean(np.abs(ytrain))
-	avg_input = np.mean(np.abs(xtrain))
-	n_features = xtrain.shape[0]
-	model = sklearn.ensemble.ExtraTreesRegressor(100)
-	#model = sklearn.linear_model.OrthogonalMatchingPursuit(n_nonzero_coefs=8, copy_X=False)
-	#model = sklearn.svm.SVR(kernel='linear', epsilon=0.001 * avg_output, gamma=avg_input/n_features, scale_C = True)
-	#model = sklearn.tree.DecisionTreeRegressor(max_depth=20, min_split=7)
-	#model = sklearn.linear_model.LinearRegression(copy_X=True)
-	#model = sklearn.linear_model.Ridge(alpha=avg_output)
-	
-	model.fit(xtrain.T, ytrain)
-	
-	#model = treelearn.train_clustered_regression_ensemble(xtrain.T, ytrain, num_models=100, k=25, bagging_percent=0.75, feature_subset_percent=1.0)
-	#model = treelearn.train_random_forest(xtrain.T, ytrain)
-	#model = treelearn.train_clustered_ols(xtrain.T, ytrain)
-	
-	
-	pred = model.predict(xtest.T)
-	mad, mr, p = eval_results(ytest, pred)
-	return mad, mr, p, ytest, pred 
+    if future_lag is None:
+        future_lag = past_lag
+    
+    xtrain, xtest, ytrain, ytest = \
+      make_returns_dataset(values, past_lag, future_lag, predict_idx, train_prct, pairwise_fn = pairwise_fn, values_are_features = values_are_features)
+    
+    avg_output = np.mean(np.abs(ytrain))
+    avg_input = np.mean(np.abs(xtrain))
+    n_features = xtrain.shape[0]
+    model = sklearn.ensemble.ExtraTreesRegressor(100)
+    #model = sklearn.linear_model.OrthogonalMatchingPursuit(n_nonzero_coefs=8, copy_X=False)
+    #model = sklearn.svm.SVR(kernel='linear', epsilon=0.001 * avg_output, gamma=avg_input/n_features, scale_C = True)
+    #model = sklearn.tree.DecisionTreeRegressor(max_depth=20, min_split=7)
+    #model = sklearn.linear_model.LinearRegression(copy_X=True)
+    #model = sklearn.linear_model.Ridge(alpha=avg_output)
+    
+    model.fit(xtrain.T, ytrain)
+    
+    #model = treelearn.train_clustered_regression_ensemble(xtrain.T, ytrain, num_models=100, k=25, bagging_percent=0.75, feature_subset_percent=1.0)
+    #model = treelearn.train_random_forest(xtrain.T, ytrain)
+    #model = treelearn.train_clustered_ols(xtrain.T, ytrain)
+    
+    
+    pred = model.predict(xtest.T)
+    mad, mr, p = eval_results(ytest, pred)
+    return mad, mr, p, ytest, pred 
 
 import sys
 
 from scipy import stats
 
-def inputs_from_values(v, lag1, lag2, future_offset, thresh_percentile, pairwise_products=False):
-	returns1 = np.log(v[:, lag1:] / v[:, :-lag1])
-	returns2 = np.log(v[:, lag2:] / v[:, :-lag2])
-	# align to make returns the same length
-	if lag1 < lag2:
-		returns1 = returns1[:, (lag2 - lag1):]
-	else:
-		returns2 = returns2[:, (lag1 - lag2):]
-	# truncate past so it aligns with vector of future returns 
-	returns1 = returns1[:, :-future_offset]
-	returns2 = returns2[:, :-future_offset]
-	returns = np.vstack([returns1, returns2])
-	n_base_features = returns.shape[0]
-	n_samples = returns.shape[1]
-	
-	features = np.zeros( (2*n_base_features, n_samples), dtype='float')
-	for i in xrange(n_base_features):
-		row = returns[i, :]
-		bottom_thresh = stats.scoreatpercentile(row, thresh_percentile)
-		top_thresh = stats.scoreatpercentile(row, 100 - thresh_percentile)
-		features[2*i, :] = row < bottom_thresh
-		features[2*i+1, :] = row > top_thresh
+class InputEncoder:
+    def __init__(self, lag1, lag2, future_offset, thresh_percentile, pairwise_products=False):
+        self.lag1 = lag1
+        self.lag2 = lag2 
+        self.future_offset = future_offset
+        self.thresh_percentile = thresh_percentile
+        self.pairwise_products = pairwise_products
+    
+    def _one_day_returns(self, v):
+        returns1 = np.log(v[:, self.lag1:] / v[:, :-self.lag1])
+        returns2 = np.log(v[:, self.lag2:] / v[:, :-self.lag2])
+        # align to make returns the same length
+        if self.lag1 < self.lag2:
+            returns1 = returns1[:, (self.lag2 - self.lag1):]
+        else:
+            returns2 = returns2[:, (self.lag1 - self.lag2):]
+        # truncate past so it aligns with vector of future returns 
+        returns1 = returns1[:, :-self.future_offset]
+        returns2 = returns2[:, :-self.future_offset]
+        return np.vstack([returns1, returns2])
+        
+        
+    def _all_day_returns(self, vs):
+        
+        return np.hstack([self._one_day_returns(v) for v in vs])
+        
+    def transform(self, vs, fit=False):
+        returns = self._all_day_returns(vs)
 
-	if pairwise_products:
-		return transform_pairwise(features, fn = np.multiply)
-	else:
-		return features 
+        if fit:
+            self.bottom_threshes = []
+            self.top_threshes = [] 
+        n_base_features = returns.shape[0]
+        n_samples = returns.shape[1]
+        
+        features = np.zeros( (2*n_base_features, n_samples), dtype='float')
+        for i in xrange(n_base_features):
+            row = returns[i, :]
+            if fit:
+                bottom_thresh = stats.scoreatpercentile(row, self.thresh_percentile)
+                self.bottom_threshes.append(bottom_thresh)
+                top_thresh = stats.scoreatpercentile(row, 100 - self.thresh_percentile)
+                self.top_threshes.append(top_thresh)
+            else:
+                top_thresh = self.top_threshes[i]
+                bottom_thresh = self.bottom_threshes[i]
+            features[2*i, :] = row < bottom_thresh
+            features[2*i+1, :] = row > top_thresh
+        if self.pairwise_products:
+            return transform_pairwise(features, fn = np.multiply)
+        else:
+            return features 
+    
+
+#def inputs_from_values(v, lag1, lag2, future_offset, thresh_percentile, pairwise_products=False):
+    
 
 #assumes 1d output 
-def outputs_from_values(v, future_offset, past_lag, thresh_percentile):
-	returns = np.log ( v[:, (past_lag+future_offset):] / values[:, past_lag:-future_offset])
-	result = np.zeros_like(returns, dtype='int')
-	bottom_thresh = stats.scoreatpercentile(returns, thresh_percentile)
-	top_thresh = stats.scoreatpercentile(returns, 100 - thresh_percentile)
-	result[returns < bottom_thresh] = -1 
-	result[returns > top_thresh] = 1 
-	return result 
-										
-	
-def f_score(precision, receall, beta=1.0):
-	top = precision * recall
-	beta_squared = beta * beta 
-	bottom = beta_squared * precision + recall 
-	return (1 + beta_squared) * (top / bottom)
+def _one_day_future_returns(v, future_offset, past_lag ):
+    return np.log ( v[(past_lag+future_offset):] / v[past_lag:-future_offset])
+    
+def _all_day_future_returns(vs, future_offset, past_lag ):
+    return np.hstack([_one_day_future_returns(v, future_offset, past_lag) for v in vs])
+
+def outputs_from_values(vs, future_offset, past_lag, thresh_percentile):
+    returns = _all_day_future_returns(vs, future_offset, past_lag) 
+    result = np.zeros(returns.shape, dtype='int')
+    bottom_thresh = stats.scoreatpercentile(returns, thresh_percentile)
+    top_thresh = stats.scoreatpercentile(returns, 100 - thresh_percentile)
+    result[returns < bottom_thresh] = -1 
+    result[returns > top_thresh] = 1 
+    return result 
+
+
+    
+def f_score(precision, recall, beta=1.0):
+    top = precision * recall
+    beta_squared = beta * beta 
+    bottom = beta_squared * precision + recall 
+    return (1 + beta_squared) * (top / bottom)
 
 
 from collections import OrderedDict, namedtuple 
 
 def param_search(training_days, testing_days, predict_idx = 0, \
-		percentiles=[2,5,10,20], 
-		lags=[10, 20, 50, 100, 200, 400], beta = 0.5):
-	Params = namedtuple('Params', \
-		'long_lag', 'short_lag', 'future_lag',  \
-		'input_threshold_percentile', 'output_threshold_percentile', 
-		'combine_inputs')
-	Result = namedtuple('Result', 
-		'score', 'precision', 'recall', 
-		'sensitivity', 'specificity',
-		'y', 'ypred', 'model')
-	best_params = None
-	best_result = None
-	best_score = 0
-	for long_lag in lags:
-		for short_lag in [l for l in lags if l < long_lag]:
-			for future_lag in lags:
-				for input_threshold_percentile in percentiles:
-					for output_threshold_percentile in percentiles:
-						for combine_inputs in [True, False]:
-							def make_inputs(days):
-								return np.hstack([
-									inputs_from_values(day, 
-										lag1 = long_lag, lag2 = short_lag, 
-										future_offset = future_lag, 
-										thresh_percentile = input_threshold_percentile, 
-										combine_inputs = combine_inputs)
-									for day in days])
-							def make_outputs(days):
-								return np.hstack([
-									outputs_from_values(day, 
-										future_offset = future_lag,
-										past_lag = long_lag, 
-										thresh_percentile = output_threshold_percentile)
-									for day in days])
-							train_x = make_inputs(training_days)
-							train_y = make_outputs(training_days)
-							
-							test_x = make_inputs(testing_days)
-							test_y = make_outputs(testing_days)
-							
-							model = sklearn.linear_model.LogisticRegression(penalty='l1')
-							model.fit(train_x, train_y)
-							pred = model.predict(test_x)
-							
-							nonzero = test_y != 0
-							zero = test_y == 0
-							pred_nonzero = pred != 0
-							pred_zero = pred == 0
-							
-							total = len(pred)
-							tp = np.sum(nonzero & pred_nonzero)
-							tn = np.sum(zero & pred_zero)
-							fp = np.sum(nonzero & zero)
-							fn = total - (tp + tn + fp)
-							
-							sensitivity = tp / float(tp + fn)
-							specificity = tn / float(tn + fp)
-							precision = tp / float(tp + fp)
-							recall = tp / float (tp + fn)
-							score = f_score(precision, recall, beta)
-							
-							params = Params(long_lag, short_lag, future_lag,
-								input_threshold_percentile, 
-								output_threshold_percentile,
-								combine_inputs)
-								
-							result = Result(score, precision, recall, sensitivity, specificity, test_y, pred, model)
-							print params, result 
-							if score > best_score:
-								best_score = score
-								best_params = params
-								best_result = result 
-	print "Best score:", best_score
-	print "Best params:", best_params
-	print "Best result:", best_result 
-	return best_params, best_result 
-								
-							
-							
-			
-		 
-	
+        percentiles=[5,10,15], 
+        lags=[25, 50, 100, 200, 400], beta = 0.5, Cs =[1, 10]):
+    Params = namedtuple('Params', 
+        ('long_lag', 'short_lag', 'future_lag',  \
+        'input_threshold_percentile', 'output_threshold_percentile', 
+        'pairwise_products', 'c'))
+    Result = namedtuple('Result', 
+        ('score', 'precision', 'recall', 
+        'sensitivity', 'specificity',
+        'y', 'ypred', 'model'))
+    best_params = None
+    best_result = None
+    best_score = 0
+    for c in Cs:
+        for pairwise_products in [False, True]:
+            for long_lag in lags:
+                for short_lag in [l for l in lags if l < long_lag]:
+                    for future_lag in [short_lag]: # [l for l in lags if l <= long_lag]:
+                        print 
+                        print "--- C = ", c, " | long_lag =", long_lag, " | short_lag =", short_lag, " | future_lag =", future_lag, " | pairwise_products = ", pairwise_products, " ---"
+                        print 
+                        for input_threshold_percentile in percentiles:
+                            for output_threshold_percentile in [input_threshold_percentile]: #[p for p in percentiles if p >= input_threshold_percentile]:
+                                
+                                params = Params(long_lag, short_lag, future_lag,
+                                    input_threshold_percentile, 
+                                    output_threshold_percentile,
+                                    pairwise_products, c)
+                                print params 
+                                sys.stdout.flush()
+                                e = InputEncoder(
+                                        lag1 = long_lag, 
+                                        lag2 = short_lag, 
+                                        future_offset = future_lag, 
+                                        thresh_percentile = input_threshold_percentile, 
+                                        pairwise_products = pairwise_products)
+
+                                def make_outputs(days):
+                                    return outputs_from_values([day[predict_idx, :] for day in days],
+                                            future_offset = future_lag,
+                                            past_lag = long_lag, 
+                                            thresh_percentile = output_threshold_percentile)
+                                            
+                                train_x = e.transform(training_days, fit=True)
+                                train_y = make_outputs(training_days)
+                                
+                                print "Training output stats: count(0) = ", np.sum(train_y == 0), "count(1) = ", np.sum(train_y == 1), "count(-1) = ", np.sum(train_y == -1)
+                                sys.stdout.flush()
+                                
+                                test_x = e.transform(testing_days, fit=False)
+                                test_y = make_outputs(testing_days)
+                                
+                                print "Testing output stats: count(0) = ", np.sum(test_y == 0), "count(1) = ", np.sum(test_y == 1), "count(-1) = ", np.sum(test_y == -1)
+                                sys.stdout.flush()
+                                
+                                
+                                print "...training model..."
+                                sys.stdout.flush()
+                                
+                                model = sklearn.linear_model.LogisticRegression(penalty='l1', C=c)
+                                model.fit(train_x.T, train_y)
+                                pred = model.predict(test_x.T)
+                                
+                                print "Predicted output stats: count(0) = ", np.sum(pred == 0), "count(1) = ", np.sum(pred == 1), "count(-1) = ", np.sum(pred == -1)
+                                sys.stdout.flush()
+                                
+                                nonzero = test_y != 0
+                                zero = test_y == 0
+                                pred_nonzero = pred != 0
+                                pred_zero = pred == 0
+                                
+                                total = len(pred)
+                                tp = np.sum(nonzero & pred_nonzero)
+                                tn = np.sum(zero & pred_zero)
+                                fp = np.sum(pred_nonzero & zero)
+                                fn = total - (tp + tn + fp)
+                                
+                                sensitivity = tp / float(tp + fn)
+                                specificity = tn / float(tn + fp)
+                                precision = tp / float(tp + fp)
+                                recall = tp / float (tp + fn)
+                                score = f_score(precision, recall, beta)
+                                
+                                    
+                                result = Result(score, precision, recall, sensitivity, specificity, test_y, pred, model)
+                                            
+                                print "Score =", score, "precision =", precision, "recall =", recall 
+                                print 
+                                sys.stdout.flush()
+          
+                                if score > best_score:
+                                    best_score = score
+                                    best_params = params
+                                    best_result = result 
+    print "Best score:", best_score
+    print "Best params:", best_params
+    print "Best result:", best_result 
+    return best_params, best_result 
+                                    
+                            
+                            
+            
+         
+    
         
         
         
