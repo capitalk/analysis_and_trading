@@ -374,7 +374,7 @@ def param_search(training_days, testing_days, predict_idx = 0, \
                         print "--- C = ", c, " | long_lag =", long_lag, " | short_lag =", short_lag, " | future_lag =", future_lag, " | pairwise_products = ", pairwise_products, " ---"
                         print 
                         for input_threshold_percentile in percentiles:
-                            for output_threshold_percentile in [input_threshold_percentile]: #[p for p in percentiles if p >= input_threshold_percentile]:
+                            for output_threshold_percentile in [p for p in percentiles if p >= input_threshold_percentile]:
                                 
                                 params = Params(long_lag, short_lag, future_lag,
                                     input_threshold_percentile, 
