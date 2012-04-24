@@ -329,12 +329,12 @@ class InputEncoder:
             base_features = features
             n = features.shape[0]
             n_total_features = (n * n - n) / 2  
-            features = np.zeros( (n_total_features, n_samples), dtype='bool')
+            features = np.zeros( (n_total_features, n_samples), dtype='int')
             idx = 0
             for i in xrange(n):
                 for j in xrange(n):
                     if i < j:
-                        features[idx,:] = base_features[i,:] & base_features[j, :]
+                        features[idx,:] = base_features[i,:] * base_features[j, :]
                         idx = idx + 1
             assert idx == n_total_features
         return features.astype('float')
@@ -382,8 +382,8 @@ from collections import OrderedDict, namedtuple
 import math 
 
 def param_search(training_days, testing_days, predict_idx = 0, \
-        percentiles=[5, 10, 15, 20, 25, 30], 
-        lags=[50, 100, 200, 300, 400], beta = 0.2, 
+        percentiles=[50, 40, 30, 20, 10], 
+        lags=[100, 200, 300, 400], beta = 0.25, 
         alphas = [0.000001, 0.00001, 0.0001], 
         etas = [0.01],
         penalties = ['l1', 'l2', ], losses=[ 'log', 'hinge'] ):
@@ -440,7 +440,12 @@ def param_search(training_days, testing_days, predict_idx = 0, \
                                 output_encoder = OutputEncoder(future_offset = future_lag, past_lag = long_lag, thresh_percentile = output_threshold_percentile)
                                 
                                 train_y = output_encoder.transform([day[predict_idx, :] for day in training_days], fit=True)
-                                print "Training output stats: count(0) = ", np.sum(train_y == 0), "count(1) = ", np.sum(train_y == 1), "count(-1) = ", np.sum(train_y == -1)
+                                print "Training output stats: ", \
+                                    "down prct =", np.exp(output_encoder.bottom_thresh) -1,  \
+                                    "up prct =", np.exp(output_encoder.top_thresh) - 1, \
+                                    "count(0) = ", np.sum(train_y == 0), \
+                                    "count(1) = ", np.sum(train_y == 1), \
+                                    "count(-1) = ", np.sum(train_y == -1)
                                 sys.stdout.flush()
                                 
                                 test_x = input_encoder.transform(testing_days, fit=False)
