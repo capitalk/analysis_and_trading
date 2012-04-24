@@ -32,7 +32,7 @@ parser.add_option("--heap_profile", dest="heap_profile", action='store_true', de
 print "Args = ", args
 print "Options = ", options
 
-timescales = [("1s", 1000), ("5s", 5000),  ("50s", 50000), ("500s", 500000)]
+timescales = [("1s", 1000), ("5s", 5000),  ("50s", 50000) ]
 extractor = FeaturePipeline(timescales=timescales)
 extractor.add_feature('t', millisecond_timestamp)
 extractor.add_feature('bid', best_bid)

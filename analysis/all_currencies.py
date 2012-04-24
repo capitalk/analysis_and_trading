@@ -266,13 +266,15 @@ def eval_returns_regression(values, past_lag, future_lag = None, predict_idx=0, 
 import sys
 
 from scipy import stats
+import scipy.sparse
 
 class InputEncoder:
-    def __init__(self, lag1, lag2, future_offset, thresh_percentile, pairwise_products=False):
+    def __init__(self, lag1, lag2, future_offset, thresh_percentile, binning=False, pairwise_products=False):
         self.lag1 = lag1
         self.lag2 = lag2 
         self.future_offset = future_offset
         self.thresh_percentile = thresh_percentile
+        self.binning = binning
         self.pairwise_products = pairwise_products
     
     def _one_day_returns(self, v):
@@ -302,43 +304,70 @@ class InputEncoder:
         n_base_features = returns.shape[0]
         n_samples = returns.shape[1]
         
-        features = np.zeros( (2*n_base_features, n_samples), dtype='float')
+        if self.binning:
+            features = np.zeros( (2*n_base_features, n_samples), dtype='bool')
+        else: 
+            features = np.zeros( (n_base_features, n_samples), dtype='int')
+            
         for i in xrange(n_base_features):
             row = returns[i, :]
             if fit:
-                bottom_thresh = stats.scoreatpercentile(row, self.thresh_percentile)
+                bottom_thresh = stats.scoreatpercentile(row[row < 0], self.thresh_percentile)
                 self.bottom_threshes.append(bottom_thresh)
-                top_thresh = stats.scoreatpercentile(row, 100 - self.thresh_percentile)
+                top_thresh = stats.scoreatpercentile(row[row > 0], 100 - self.thresh_percentile)
                 self.top_threshes.append(top_thresh)
             else:
                 top_thresh = self.top_threshes[i]
                 bottom_thresh = self.bottom_threshes[i]
-            features[2*i, :] = row < bottom_thresh
-            features[2*i+1, :] = row > top_thresh
+            if self.binning:
+                features[2*i, :] = row < bottom_thresh
+                features[2*i+1, :] = row > top_thresh
+            else:
+                features[i, :] = -1 * (row < bottom_thresh) + (row > top_thresh)
+                
         if self.pairwise_products:
-            return transform_pairwise(features, fn = np.multiply)
-        else:
-            return features 
+            base_features = features
+            n = features.shape[0]
+            n_total_features = (n * n - n) / 2  
+            features = np.zeros( (n_total_features, n_samples), dtype='bool')
+            idx = 0
+            for i in xrange(n):
+                for j in xrange(n):
+                    if i < j:
+                        features[idx,:] = base_features[i,:] & base_features[j, :]
+                        idx = idx + 1
+            assert idx == n_total_features
+        return features.astype('float')
     
 
 #def inputs_from_values(v, lag1, lag2, future_offset, thresh_percentile, pairwise_products=False):
     
 
 #assumes 1d output 
-def _one_day_future_returns(v, future_offset, past_lag ):
-    return np.log ( v[(past_lag+future_offset):] / v[past_lag:-future_offset])
-    
-def _all_day_future_returns(vs, future_offset, past_lag ):
-    return np.hstack([_one_day_future_returns(v, future_offset, past_lag) for v in vs])
 
-def outputs_from_values(vs, future_offset, past_lag, thresh_percentile):
-    returns = _all_day_future_returns(vs, future_offset, past_lag) 
-    result = np.zeros(returns.shape, dtype='int')
-    bottom_thresh = stats.scoreatpercentile(returns, thresh_percentile)
-    top_thresh = stats.scoreatpercentile(returns, 100 - thresh_percentile)
-    result[returns < bottom_thresh] = -1 
-    result[returns > top_thresh] = 1 
-    return result 
+class OutputEncoder:
+    def __init__(self, future_offset, past_lag, thresh_percentile):
+        self.future_offset = future_offset
+        self.past_lag = past_lag 
+        self.thresh_percentile = thresh_percentile 
+        self.bottom_thresh = None
+        self.top_thresh = None
+
+    def _one_day_future_returns(self, v ):
+        return np.log ( v[(self.past_lag+self.future_offset):] / v[self.past_lag:-self.future_offset])
+    
+    def _all_day_future_returns(self, vs ):
+        return np.hstack([self._one_day_future_returns(v) for v in vs])
+    
+    def transform(self, vs, fit=False):
+        returns = _all_day_future_returns(vs, self.future_offset, self.past_lag) 
+        result = np.zeros(returns.shape, dtype='int')
+        if fit:
+            self.bottom_thresh = stats.scoreatpercentile(returns[returns < 0], self.thresh_percentile)
+            self.top_thresh = stats.scoreatpercentile(returns[returns > 0], 100 - self.thresh_percentile)
+        result[returns < self.bottom_thresh] = -1 
+        result[returns > self.top_thresh] = 1 
+        return result 
 
 
     
@@ -350,106 +379,154 @@ def f_score(precision, recall, beta=1.0):
 
 
 from collections import OrderedDict, namedtuple 
+import math 
 
 def param_search(training_days, testing_days, predict_idx = 0, \
-        percentiles=[5,10,15], 
-        lags=[25, 50, 100, 200, 400], beta = 0.5, Cs =[1, 10]):
+        percentiles=[5, 10, 15, 20, 25, 30], 
+        lags=[50, 100, 200, 300, 400], beta = 0.2, 
+        alphas = [0.000001, 0.00001, 0.0001], 
+        etas = [0.01],
+        penalties = ['l1', 'l2', ], losses=[ 'log', 'hinge'] ):
     Params = namedtuple('Params', 
         ('long_lag', 'short_lag', 'future_lag',  \
         'input_threshold_percentile', 'output_threshold_percentile', 
-        'pairwise_products', 'c'))
+        'pairwise_products', 'binning', 
+        'loss', 'penalty', 
+        'target_updates', 
+        'eta0', 'alpha'))
     Result = namedtuple('Result', 
         ('score', 'precision', 'recall', 
-        'sensitivity', 'specificity',
-        'y', 'ypred', 'model'))
+        'specificity',
+        'y', 'ypred', 
+        'input_encoder', 'output_encoder', 'model'))
     best_params = None
     best_result = None
     best_score = 0
-    for c in Cs:
-        for pairwise_products in [False, True]:
+   
+    all_experiments = []
+    for binning in [False, True]:
+        # don't allow both binning and pairwise products
+        for pairwise_products in ([False] if binning else [True, False]):
             for long_lag in lags:
                 for short_lag in [l for l in lags if l < long_lag]:
-                    for future_lag in [short_lag]: # [l for l in lags if l <= long_lag]:
-                        print 
-                        print "--- C = ", c, " | long_lag =", long_lag, " | short_lag =", short_lag, " | future_lag =", future_lag, " | pairwise_products = ", pairwise_products, " ---"
-                        print 
+                    for future_lag in [l for l in lags if l >= short_lag and l <= long_lag]:
+                        
                         for input_threshold_percentile in percentiles:
-                            for output_threshold_percentile in [p for p in percentiles if p >= input_threshold_percentile]:
+                            input_encoder = InputEncoder(
+                                    lag1 = long_lag, 
+                                    lag2 = short_lag, 
+                                    future_offset = future_lag, 
+                                    thresh_percentile = input_threshold_percentile, 
+                                    binning = binning, 
+                                    pairwise_products = pairwise_products)
+                                    
+                                    
+                            train_x = input_encoder.transform(training_days, fit=True)
+                            
+                            # to avoid trivial predictions at least make the future percentile greater than the number of 
+                            # ticks into the future we're looking
+                            for output_threshold_percentile in [p for p in percentiles if p >= input_threshold_percentile and p <= future_lag]:
+                                print 
+                                print " --- lag1 =", long_lag, \
+                                    " | lag2 =", short_lag, \
+                                    " | future =", future_lag, \
+                                    " | products =", pairwise_products, \
+                                    " | binning =", binning, \
+                                    " | input_threshold =", input_threshold_percentile, \
+                                    " | output_threshold =", output_threshold_percentile, \
+                                    " ---"
+                                print 
+                        
+                                output_encoder = OutputEncoder(future_offset = future_lag, past_lag = long_lag, thresh_percentile = output_threshold_percentile)
                                 
-                                params = Params(long_lag, short_lag, future_lag,
-                                    input_threshold_percentile, 
-                                    output_threshold_percentile,
-                                    pairwise_products, c)
-                                print params 
-                                sys.stdout.flush()
-                                e = InputEncoder(
-                                        lag1 = long_lag, 
-                                        lag2 = short_lag, 
-                                        future_offset = future_lag, 
-                                        thresh_percentile = input_threshold_percentile, 
-                                        pairwise_products = pairwise_products)
-
-                                def make_outputs(days):
-                                    return outputs_from_values([day[predict_idx, :] for day in days],
-                                            future_offset = future_lag,
-                                            past_lag = long_lag, 
-                                            thresh_percentile = output_threshold_percentile)
-                                            
-                                train_x = e.transform(training_days, fit=True)
-                                train_y = make_outputs(training_days)
-                                
+                                train_y = output_encoder.transform([day[predict_idx, :] for day in training_days], fit=True)
                                 print "Training output stats: count(0) = ", np.sum(train_y == 0), "count(1) = ", np.sum(train_y == 1), "count(-1) = ", np.sum(train_y == -1)
                                 sys.stdout.flush()
                                 
-                                test_x = e.transform(testing_days, fit=False)
-                                test_y = make_outputs(testing_days)
+                                test_x = input_encoder.transform(testing_days, fit=False)
+                                test_y = output_encoder.transform([day[predict_idx, :] for day in testing_days], fit=False)
                                 
                                 print "Testing output stats: count(0) = ", np.sum(test_y == 0), "count(1) = ", np.sum(test_y == 1), "count(-1) = ", np.sum(test_y == -1)
-                                sys.stdout.flush()
-                                
-                                
-                                print "...training model..."
-                                sys.stdout.flush()
-                                
-                                model = sklearn.linear_model.LogisticRegression(penalty='l1', C=c)
-                                model.fit(train_x.T, train_y)
-                                pred = model.predict(test_x.T)
-                                
-                                print "Predicted output stats: count(0) = ", np.sum(pred == 0), "count(1) = ", np.sum(pred == 1), "count(-1) = ", np.sum(pred == -1)
-                                sys.stdout.flush()
-                                
-                                nonzero = test_y != 0
-                                zero = test_y == 0
-                                pred_nonzero = pred != 0
-                                pred_zero = pred == 0
-                                
-                                total = len(pred)
-                                tp = np.sum(nonzero & pred_nonzero)
-                                tn = np.sum(zero & pred_zero)
-                                fp = np.sum(pred_nonzero & zero)
-                                fn = total - (tp + tn + fp)
-                                
-                                sensitivity = tp / float(tp + fn)
-                                specificity = tn / float(tn + fp)
-                                precision = tp / float(tp + fp)
-                                recall = tp / float (tp + fn)
-                                score = f_score(precision, recall, beta)
-                                
-                                    
-                                result = Result(score, precision, recall, sensitivity, specificity, test_y, pred, model)
-                                            
-                                print "Score =", score, "precision =", precision, "recall =", recall 
                                 print 
                                 sys.stdout.flush()
-          
-                                if score > best_score:
-                                    best_score = score
-                                    best_params = params
-                                    best_result = result 
-    print "Best score:", best_score
-    print "Best params:", best_params
-    print "Best result:", best_result 
-    return best_params, best_result 
+                                
+                                sys.stdout.flush()
+                                for loss in losses:
+                                    for penalty in penalties:
+                                        for alpha in alphas:
+                                            for eta0 in etas:
+                                                for target_updates in [1000000]:
+                                                    n_samples = train_x.shape[1]
+                                                    n_iter = int(math.ceil(float(target_updates) / n_samples))
+                                                    params = Params(long_lag, short_lag, future_lag,
+                                                        input_threshold_percentile, 
+                                                        output_threshold_percentile,
+                                                        pairwise_products, binning, 
+                                                        loss, penalty, 
+                                                        target_updates, 
+                                                        eta0, alpha)
+                                                    print params 
+                                                    sys.stdout.flush()
+                                                    #print "Training model: n_features=%d, n_iter=%d, alpha=%s, eta0=%s, target_updates=%s" % (train_x.shape[0], n_iter, alpha, eta0, target_updates)
+
+                                                    model = sklearn.linear_model.SGDClassifier (
+                                                        penalty= penalty, 
+                                                        loss = loss, 
+                                                        shuffle = True, 
+                                                        alpha = alpha,
+                                                        eta0 = eta0,  
+                                                        n_iter = n_iter)
+
+                                                    model.fit(train_x.T, train_y)
+                                                    pred = model.predict(test_x.T)
+                                                    
+                                                    print "Predicted output stats: count(0) = ", np.sum(pred == 0), "count(1) = ", np.sum(pred == 1), "count(-1) = ", np.sum(pred == -1)
+                                                    sys.stdout.flush()
+                                                    
+                                                    nonzero = test_y != 0
+                                                    zero = test_y == 0
+                                                    pred_nonzero = pred != 0
+                                                    pred_zero = pred == 0
+                                                    correct = (pred == test_y)
+                                                    incorrect = ~correct
+                                                    
+                                                    total = len(pred)
+                                                    tp = np.sum(nonzero & correct)
+                                                    tn = np.sum(zero & correct)
+                                                    fp = np.sum(pred_nonzero & incorrect)
+                                                    fn = np.sum(pred_zero & incorrect)
+                                                    
+                                                    assert tp + tn + fp + fn == total 
+                                                    
+                                                    if (tp > 0) and (tn > 0):
+                                                        specificity = tn / float(tn + fp)
+                                                        precision = tp / float(tp + fp)
+                                                        recall = tp / float (tp + fn)
+                                                        score = f_score(precision, recall, beta)
+                                                    else:
+                                                        specificity = 0
+                                                        precision = 0
+                                                        recall = 0
+                                                        score = 0
+                                                    
+                                                    print "Score =", score, "precision =", precision, "recall =", recall 
+                                                    print 
+                                                    sys.stdout.flush()
+                                                        
+                                                    result = Result(score, precision, recall, specificity, test_y, pred, input_encoder, output_encoder, model)
+                                                    all_experiments.append( (params, result)) 
+                                                    
+                                                    if score > best_score:
+                                                        best_score = score
+                                                        best_params = params
+                                                        best_result = result 
+                                print "***"
+                                print "Best score:", best_score
+                                print "Best params:", best_params
+                                print "Best result:", best_result 
+                                print "***"
+                                sys.stdout.flush()
+    return best_params, best_result, all_experiments 
                                     
                             
                             
