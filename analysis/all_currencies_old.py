@@ -177,6 +177,40 @@ def make_returns_dataset(values, past_lag, future_lag = None, predict_idx=0, tra
 	ytest = y[ntrain:]
 	return xtrain, xtest, ytrain, ytest 
 	
+def eval_results(y, pred):
+    mad = np.mean(np.abs(y-pred))
+    mad_ratio = mad/ np.mean( np.abs(y) )
+    prct_same_sign = np.mean(np.sign(y) == np.sign(pred))
+    return mad, mad_ratio, prct_same_sign
+
+import treelearn 
+def eval_returns_regression(values, past_lag, future_lag = None, predict_idx=0, train_prct=0.5, pairwise_fn = None, values_are_features=False):
+    if future_lag is None:
+        future_lag = past_lag
+    
+    xtrain, xtest, ytrain, ytest = \
+      make_returns_dataset(values, past_lag, future_lag, predict_idx, train_prct, pairwise_fn = pairwise_fn, values_are_features = values_are_features)
+    
+    avg_output = np.mean(np.abs(ytrain))
+    avg_input = np.mean(np.abs(xtrain))
+    n_features = xtrain.shape[0]
+    model = sklearn.ensemble.ExtraTreesRegressor(100)
+    #model = sklearn.linear_model.OrthogonalMatchingPursuit(n_nonzero_coefs=8, copy_X=False)
+    #model = sklearn.svm.SVR(kernel='linear', epsilon=0.001 * avg_output, gamma=avg_input/n_features, scale_C = True)
+    #model = sklearn.tree.DecisionTreeRegressor(max_depth=20, min_split=7)
+    #model = sklearn.linear_model.LinearRegression(copy_X=True)
+    #model = sklearn.linear_model.Ridge(alpha=avg_output)
+    
+    model.fit(xtrain.T, ytrain)
+    
+    #model = treelearn.train_clustered_regression_ensemble(xtrain.T, ytrain, num_models=100, k=25, bagging_percent=0.75, feature_subset_percent=1.0)
+    #model = treelearn.train_random_forest(xtrain.T, ytrain)
+    #model = treelearn.train_clustered_ols(xtrain.T, ytrain)
+    
+    
+    pred = model.predict(xtest.T)
+    mad, mr, p = eval_results(ytest, pred)
+    return mad, mr, p, ytest, pred 
 
 def single_day_param_search(values, predict_idx = 0, values_are_features = False, pairwise_fn = None, dataset_start_hour=1, dataset_end_hour=20):
 	
