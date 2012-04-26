@@ -360,7 +360,7 @@ class OutputEncoder:
         return np.hstack([self._one_day_future_returns(v) for v in vs])
     
     def transform(self, vs, fit=False):
-        returns = _all_day_future_returns(vs, self.future_offset, self.past_lag) 
+        returns = self._all_day_future_returns(vs) 
         result = np.zeros(returns.shape, dtype='int')
         if fit:
             self.bottom_thresh = stats.scoreatpercentile(returns[returns < 0], self.thresh_percentile)
@@ -377,37 +377,104 @@ def f_score(precision, recall, beta=1.0):
     bottom = beta_squared * precision + recall 
     return (1 + beta_squared) * (top / bottom)
 
+def eval_prediction(test_y, pred, beta=1.0):
+    zero = test_y == 0
+    nonzero = ~zero
+    pred_zero = pred == 0
+    pred_nonzero = ~pred_zero
+
+    correct = (pred == test_y)
+    incorrect = ~correct
+    
+    total = len(pred)
+    tp = np.sum(nonzero & correct)
+    tn = np.sum(zero & correct)
+    fp = np.sum(pred_nonzero & incorrect)
+    fn = total - tp - tn - fp 
+    
+    if (tp > 0) and (tn > 0):
+        specificity = tn / float(tn + fp)
+        precision = tp / float(tp + fp)
+        recall = tp / float (tp + fn)
+        score = f_score(precision, recall, beta)
+    else:
+        specificity = 0
+        precision = 0
+        recall = 0
+        score = 0
+    return score, precision, recall, specificity
+
+def probs_to_features(up, down, zero, up_v_down, up_v_zero, down_v_zero):
+    not_down = 1 - down 
+    not_zero = 1 - zero
+    not_up = 1 - up
+
+    return np.vstack([
+        up, 
+        down, 
+        zero, 
+        up * not_down, 
+        up * not_zero, 
+        down * not_up, 
+        down * not_zero, 
+        zero * not_up, 
+        zero * not_down, 
+        up_v_down, 
+        up_v_zero, 
+        down_v_zero,
+        not_up * down_v_zero,  # p(DOWN or ZERO) * p(DOWN | DOWN OR ZERO)
+        #not_up * (1 - down_v_zero), # p(DOWN or ZERO) * P(ZERO | DOWN OR ZERO)
+        not_down * up_v_zero, # p (UP or ZERO) * p(UP | UP or ZERO)
+        #not_down * (1 - up_v_zero), # ... 
+        not_zero * up_v_down, 
+        #not_zero * (1 - up_v_down), 
+    ])
+    
 
 from collections import OrderedDict, namedtuple 
 import math 
+import copy
 
-def param_search(training_days, testing_days, predict_idx = 0, \
-        percentiles=[50, 40, 30, 20, 10], 
-        lags=[100, 200, 300, 400], beta = 0.25, 
-        alphas = [0.000001, 0.00001, 0.0001], 
+def param_search(training_days, testing_days, 
+        predict_idx = 0, 
+        target_precision = 0.6, 
+        percentiles=[10, 20, 30], 
+        lags=[100, 200, 300, 400, 500], beta = 2.0, 
+        alphas = [ 0.000001], 
         etas = [0.01],
-        penalties = ['l1', 'l2', ], losses=[ 'log', 'hinge'] ):
+        penalties = ['l2', ], 
+        losses=[ 'hinge'],
+        hidden_layer_thresholds = [None] ):
     Params = namedtuple('Params', 
         ('long_lag', 'short_lag', 'future_lag',  \
-        'input_threshold_percentile', 'output_threshold_percentile', 
-        'pairwise_products', 'binning', 
+        'input_threshold_percentile', 
+        'output_threshold_percentile', 
+        'pairwise_products', 
+        'binning', 
+        'use_hidden_layer', 
+        'hidden_layer_threshold', 
+        'combiner_reject_threshold', 
         'loss', 'penalty', 
         'target_updates', 
         'eta0', 'alpha'))
     Result = namedtuple('Result', 
         ('score', 'precision', 'recall', 
         'specificity',
+        'all_precisions', 'all_recalls', 
         'y', 'ypred', 
-        'input_encoder', 'output_encoder', 'model'))
+        'input_encoder', 'output_encoder', 
+        'models', 
+        'combiner', 
+        'rejector', 
+        'threshold'))
     best_params = None
-    best_result = None
-    best_score = 0
-   
-    all_experiments = []
+    best_result = Result(*[0 for _ in Result._fields])
+
+    all_scores = {}
     for binning in [False, True]:
         # don't allow both binning and pairwise products
-        for pairwise_products in ([False] if binning else [True, False]):
-            for long_lag in lags:
+        for pairwise_products in [False]:
+            for long_lag in reversed(lags):
                 for short_lag in [l for l in lags if l < long_lag]:
                     for future_lag in [l for l in lags if l >= short_lag and l <= long_lag]:
                         
@@ -462,76 +529,161 @@ def param_search(training_days, testing_days, predict_idx = 0, \
                                             for eta0 in etas:
                                                 for target_updates in [1000000]:
                                                     n_samples = train_x.shape[1]
-                                                    n_iter = int(math.ceil(float(target_updates) / n_samples))
-                                                    params = Params(long_lag, short_lag, future_lag,
-                                                        input_threshold_percentile, 
-                                                        output_threshold_percentile,
-                                                        pairwise_products, binning, 
-                                                        loss, penalty, 
-                                                        target_updates, 
-                                                        eta0, alpha)
-                                                    print params 
-                                                    sys.stdout.flush()
-                                                    #print "Training model: n_features=%d, n_iter=%d, alpha=%s, eta0=%s, target_updates=%s" % (train_x.shape[0], n_iter, alpha, eta0, target_updates)
-
-                                                    model = sklearn.linear_model.SGDClassifier (
-                                                        penalty= penalty, 
-                                                        loss = loss, 
-                                                        shuffle = True, 
-                                                        alpha = alpha,
-                                                        eta0 = eta0,  
-                                                        n_iter = n_iter)
-
-                                                    model.fit(train_x.T, train_y)
-                                                    pred = model.predict(test_x.T)
                                                     
-                                                    print "Predicted output stats: count(0) = ", np.sum(pred == 0), "count(1) = ", np.sum(pred == 1), "count(-1) = ", np.sum(pred == -1)
-                                                    sys.stdout.flush()
+                                            
                                                     
-                                                    nonzero = test_y != 0
-                                                    zero = test_y == 0
-                                                    pred_nonzero = pred != 0
-                                                    pred_zero = pred == 0
-                                                    correct = (pred == test_y)
-                                                    incorrect = ~correct
-                                                    
-                                                    total = len(pred)
-                                                    tp = np.sum(nonzero & correct)
-                                                    tn = np.sum(zero & correct)
-                                                    fp = np.sum(pred_nonzero & incorrect)
-                                                    fn = np.sum(pred_zero & incorrect)
-                                                    
-                                                    assert tp + tn + fp + fn == total 
-                                                    
-                                                    if (tp > 0) and (tn > 0):
-                                                        specificity = tn / float(tn + fp)
-                                                        precision = tp / float(tp + fp)
-                                                        recall = tp / float (tp + fn)
-                                                        score = f_score(precision, recall, beta)
-                                                    else:
-                                                        specificity = 0
-                                                        precision = 0
-                                                        recall = 0
-                                                        score = 0
-                                                    
-                                                    print "Score =", score, "precision =", precision, "recall =", recall 
-                                                    print 
-                                                    sys.stdout.flush()
+                                                    # simplifying assumption: 
+                                                    # use same model params for predictor and
+                                                    # filters 
+                                                    def mk_model(loss = loss, penalty=penalty, n_samples=n_samples):
+                                                        return sklearn.linear_model.SGDClassifier (
+                                                            penalty= penalty, 
+                                                            loss = loss, 
+                                                            shuffle = True, 
+                                                            alpha = alpha,
+                                                            eta0 = eta0,  
+                                                            n_iter = int(math.ceil(float(target_updates) / n_samples)))
                                                         
-                                                    result = Result(score, precision, recall, specificity, test_y, pred, input_encoder, output_encoder, model)
-                                                    all_experiments.append( (params, result)) 
-                                                    
-                                                    if score > best_score:
-                                                        best_score = score
-                                                        best_params = params
-                                                        best_result = result 
+                                                    for use_hidden_layer in [False, True]:
+                                                        for hidden_layer_threshold in \
+                                                            hidden_layer_thresholds if use_hidden_layer else [None]:
+                                                        
+                                                            
+                                                            models = {}
+                                                            if use_hidden_layer:
+                                                                train_probs = {}
+                                                                test_probs = {}
+                                                                labels = [1, -1, 0]
+                                                                ys = {}
+                                                                
+                                                                for l in labels:
+                                                                    model = mk_model('log')
+                                                                    ys[l] = (train_y == l) 
+                                                                    model.fit(train_x.T, ys[l])
+                                                                    models[l] = model
+                                                                    train_probs[l] = model.predict_proba(train_x.T)
+                                                                    test_probs[l] = model.predict_proba(test_x.T)
+                                                                
+                                                                for i,l1 in enumerate(labels):
+                                                                    for j,l2 in enumerate(labels):
+                                                                        if i < j:
+                                                                            mask = ys[l1] | ys[l2]
+                                                                            data = train_x[:, mask].T
+                                                                            model = mk_model('log', n_samples = data.shape[0])
+                                                                            
+                                                                            model.fit(data, ys[l1][mask])
+                                                                            
+                                                                            models[ (l1, l2) ] = model 
+                                                                            train_pred = model.predict_proba(train_x.T)
+                                                                            train_probs[ (l1, l2) ] = train_pred
+                                                                            train_probs[ (l2, l1) ] = 1 - train_pred
+                                                                            
+                                                                            test_pred = model.predict_proba(test_x.T)
+                                                                            test_probs[ (l1, l2) ] = test_pred 
+                                                                            test_probs[ (l2, l1) ] = 1 - test_pred 
+                                                                        
+                                                                #probs_to_features(up, down, zero, up_v_down, up_v_zero, down_v_zero):
+                                                                def mk_second_layer_features(ps):
+                                                                    if hidden_layer_threshold is not None:
+                                                                        h = hidden_layer_threshold
+                                                                        return probs_to_features(
+                                                                            ps[1] > h, ps[-1] > h, ps[0] > h,
+                                                                            ps[(1,-1)] > h, ps[(1,0)] > h, ps[(-1, 0)] > h
+                                                                        )    
+                                                                    else:
+                                                                        return probs_to_features(
+                                                                            ps[1], ps[-1], ps[0],
+                                                                            ps[(1,-1)], ps[(1,0)], ps[(-1, 0)]
+                                                                        )                                                                        
+                                                                train2 = mk_second_layer_features(train_probs)
+                                                                test2 = mk_second_layer_features(test_probs)
+                                                            else:
+                                                                train2 = train_x
+                                                                test2 = test_x 
+                                                            
+                                                            rejector = mk_model('log')
+                                                            rejector.fit(train2.T, train_y == 0)
+                                                            
+                                                            train_reject_signal = rejector.predict_proba(train2.T)
+                                                            test_reject_signal = rejector.predict_proba(test2.T)
+                                                            
+                                                            for combiner_reject_threshold in [0.95, 1.0]:
+                                                                params = Params(
+                                                                    long_lag, short_lag, future_lag,
+                                                                    input_threshold_percentile, 
+                                                                    output_threshold_percentile,
+                                                                    pairwise_products, binning, 
+                                                                    use_hidden_layer,
+                                                                    hidden_layer_threshold, 
+                                                                    combiner_reject_threshold, 
+                                                                    loss, penalty, 
+                                                                    target_updates, 
+                                                                    eta0, alpha)
+                                                        
+                                                                print params 
+                                                                sys.stdout.flush()
+                                                
+                                                            
+                                                                accepted_idx = train_reject_signal < combiner_reject_threshold
+                                                                n_accepted = np.sum(accepted_idx)
+                                                                print "Combiner using", n_accepted, "of", len(accepted_idx)
+                                                                
+                                                                combiner = mk_model(n_samples=n_accepted)
+                                                                combiner.fit(train2[:, accepted_idx].T, train_y[accepted_idx])
+                                                                raw_pred = combiner.predict(test2.T)
+                                                            
+                                                            
+                                                            
+                                                                score, precision, recall, specificity = (0,0,0,0)
+                                                                precisions = []
+                                                                recalls = []
+                                                                for threshold in np.unique(test_reject_signal)[1:]:
+                                                                    candidate_pred = raw_pred * (test_reject_signal < threshold)
+                                                                    cscore, cp, cr, cspec = eval_prediction(test_y, candidate_pred, beta)
+                                                                    precisions.append(cp)
+                                                                    recalls.append(cr)
+                                                                    print threshold, cp, cr 
+                                                                    if cp > target_precision:
+                                                                        if cscore > score:
+                                                                            score, precision, recall, specificity = cscore, cp, cr, cspec
+                                                                            pred = candidate_pred
+                                                                    else:
+                                                                        break 
+                                                            
+                                                                all_scores[params] = score    
+                                                                if score > 0:
+                                                                    print "Predicted output: count(0)=%d, count(1)=%d, count(-1)=%d, filtered=%d" %  \
+                                                                        (np.sum(pred == 0), np.sum(pred == 1), np.sum(pred == -1), np.sum(pred != raw_pred) )
+                                                                
+                                                                    print "Score =", score, "precision =", precision, "recall =", recall 
+                                                                else:
+                                                                    print "Score = 0"
+                                                                sys.stdout.flush()
+                                                            
+                                                        
+                                                                if recall > best_result.recall:
+                                                                    result = Result(\
+                                                                        score, precision, recall, specificity, \
+                                                                        precisions, recalls, \
+                                                                        test_y, pred, \
+                                                                        input_encoder, output_encoder, \
+                                                                        models,
+                                                                        combiner,
+                                                                        rejector,
+                                                                        threshold)
+                                                                    best_params = params
+                                                                    best_result = result 
+                                                                print 
                                 print "***"
-                                print "Best score:", best_score
                                 print "Best params:", best_params
+                                print 
                                 print "Best result:", best_result 
+                                print 
+                                print "Best precision:", best_result.precision
+                                print "Best recall:", best_result.recall
                                 print "***"
                                 sys.stdout.flush()
-    return best_params, best_result, all_experiments 
+    return best_params, best_result, all_scores
                                     
                             
                             
