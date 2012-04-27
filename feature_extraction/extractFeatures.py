@@ -27,6 +27,7 @@ parser.add_option("-c", "--cloud", dest="use_cloud", action="store_true", defaul
 parser.add_option("-s", "--cloud_sim", dest="cloud_sim", action="store_true", default=False, help="use cloud simulator")
 parser.add_option("-a", "--aggregate", dest="aggregate", action="store_true", default=False, help="aggregate features over longer time scales")
 parser.add_option("--heap_profile", dest="heap_profile", action='store_true', default=False, help="print information about live heap objects")
+parser.add_option("-n", "--num_processors", dest="num_processors", type="int", default=0, help="number of processors when not using cloud")
 
 (options, args) = parser.parse_args()
 print "Args = ", args
@@ -56,8 +57,8 @@ extractor.add_feature('filled', fill_volume, sum_100ms=True)
 extractor.add_feature('canceled', canceled_volume, sum_100ms=True)
 extractor.add_feature('insertion_flow', insertion_flow)
 
-extractor.add_reducer('mean',np.mean)
 if options.aggregate: 
+    extractor.add_reducer('mean',np.mean)
     extractor.add_reducer('std', np.std)
     extractor.add_reducer('max', np.max)
     extractor.add_reducer('min', np.min)
@@ -135,6 +136,7 @@ if len(args) != 1:
     parser.print_help()
 else:
     cloud.config.max_transmit_data = 56700000
+    cloud.config.num_procs = options.num_processors
     if options.cloud_sim: 
         cloud.start_simulator()
     else:

@@ -236,13 +236,17 @@ from scipy import stats
 import scipy.sparse
 
 class InputEncoder:
-    def __init__(self, lag1, lag2, future_offset, thresh_percentile, binning=False, pairwise_products=False):
+    def __init__(self, lag1, lag2, future_offset, thresh_percentile= None, binning=False, pairwise_products=False, pca_components=None):
         self.lag1 = lag1
         self.lag2 = lag2 
         self.future_offset = future_offset
         self.thresh_percentile = thresh_percentile
         self.binning = binning
         self.pairwise_products = pairwise_products
+        if pca_components is None:
+            self.pca = None
+        else:
+            self.pca = sklearn.decomposition.RandomizedPCA(pca_components)
     
     def _one_day_returns(self, v):
         returns1 = np.log(v[:, self.lag1:] / v[:, :-self.lag1])
@@ -265,38 +269,34 @@ class InputEncoder:
     def transform(self, vs, fit=False):
         returns = self._all_day_returns(vs)
 
-        if fit:
+        if fit and self.thresh_percentile:
             self.bottom_threshes = []
             self.top_threshes = [] 
+        
         n_base_features = returns.shape[0]
         n_samples = returns.shape[1]
         
-        if self.binning:
-            features = np.zeros( (2*n_base_features, n_samples), dtype='bool')
-        else: 
+        if self.thresh_percentile:
             features = np.zeros( (n_base_features, n_samples), dtype='int')
-            
-        for i in xrange(n_base_features):
-            row = returns[i, :]
-            if fit:
-                bottom_thresh = stats.scoreatpercentile(row[row < 0], self.thresh_percentile)
-                self.bottom_threshes.append(bottom_thresh)
-                top_thresh = stats.scoreatpercentile(row[row > 0], 100 - self.thresh_percentile)
-                self.top_threshes.append(top_thresh)
-            else:
-                top_thresh = self.top_threshes[i]
-                bottom_thresh = self.bottom_threshes[i]
-            if self.binning:
-                features[2*i, :] = row < bottom_thresh
-                features[2*i+1, :] = row > top_thresh
-            else:
+            for i in xrange(n_base_features):
+                row = returns[i, :]
+                if fit:
+                    bottom_thresh = stats.scoreatpercentile(row[row < 0], self.thresh_percentile)
+                    self.bottom_threshes.append(bottom_thresh)
+                    top_thresh = stats.scoreatpercentile(row[row > 0], 100 - self.thresh_percentile)
+                    self.top_threshes.append(top_thresh)
+                else:
+                    top_thresh = self.top_threshes[i]
+                    bottom_thresh = self.bottom_threshes[i]
                 features[i, :] = -1 * (row < bottom_thresh) + (row > top_thresh)
-                
+        else:
+            features = returns
+
         if self.pairwise_products:
             base_features = features
             n = features.shape[0]
             n_total_features = (n * n + n) / 2  
-            features = np.zeros( (n_total_features, n_samples), dtype='int')
+            features = np.zeros( (n_total_features, n_samples), dtype=features.dtype)
             idx = 0
             for i in xrange(n):
                 for j in xrange(n):
@@ -304,6 +304,22 @@ class InputEncoder:
                         features[idx,:] = base_features[i,:] * base_features[j, :]
                         idx = idx + 1
             assert idx == n_total_features
+        
+        if self.pca and fit:
+            features = self.pca.fit_transform(features.T).T
+        elif self.pca:
+            features = self.pca.transform(features.T).T
+        
+        if self.binning:
+            nrows = features.shape[0]
+            binned_features = np.zeros( (2*nrows, n_samples), dtype=features.dtype)
+            for i in xrange(nrows):
+                row = features[i, :]
+                pos = row > 0
+                binned_features[2*i, pos] = row[pos]
+                binned_features[2*i+1, ~pos] = -1*row[~pos]
+            features = binned_features
+        
         return features.astype('float')
     
 
@@ -397,11 +413,39 @@ import copy
 import sklearn.ensemble
 import sklearn.decomposition
 
+
+import os
+def get_immediate_subdirectories(d):
+    return [name for name in os.listdir(d)
+            if os.path.isdir(os.path.join(d, name))]
+
+def load_all_days(base_dir, start_hour=3, end_hour=7):
+    values = []
+    names = []
+    first_clique = None
+    for s in get_immediate_subdirectories(base_dir):
+        feature_dir = os.path.join(base_dir, s, 'features')
+        if os.path.exists(feature_dir) and os.path.isdir(feature_dir):
+            wildcard = os.path.join(feature_dir, '*.hdf')
+            try:
+                print "Loading", wildcard 
+                v, c, _ = load_clique_values_from_path(wildcard, start_hour, end_hour, first_clique)
+                first_clique = c
+                names.append(s)
+                values.append(v)
+            except: 
+                print "Failed", sys.exc_info()
+    return values, names
+
+            
+    
+
 def param_search(training_days, testing_days, 
         predict_idx = 0, 
-        target_precision = 0.6, 
-        percentiles=[15, 20, 25, 30], 
-        lags=[100, 200,  300, 400, 500, 600, 700], beta = 2.0, 
+        target_precision = 0.58, 
+        input_percentiles=[ 10, 15, 20, 25], 
+        output_percentiles=[15, 20, 25, 30],
+        lags=[100, 200,  300, 400, 500, 600], beta = 2.0, 
         alphas = [ 0.000001], 
         etas = [0.01],
         penalties = ['l2', ], 
@@ -435,7 +479,6 @@ def param_search(training_days, testing_days,
         'ypred', 
         'input_encoder', 
         'output_encoder', 
-        'pca', 
         'models', 
         'combiner', 
         'rejector', 
@@ -446,34 +489,29 @@ def param_search(training_days, testing_days,
     best_result = Result(*[0 for _ in Result._fields])
 
     all_scores = {}
-    for binning in [False, True]:
+    for binning in [True, False]:
         # don't allow both binning and pairwise products
         for pairwise_products in ([False] if binning else [False, True]):
             for long_lag in reversed(lags):
                 for short_lag in [l for l in reversed(lags) if l < long_lag]:
                     for future_lag in [l for l in lags if l >= short_lag and l < long_lag]:
-                        for input_threshold_percentile in percentiles:
-                            input_encoder = InputEncoder(
+                        for input_threshold_percentile in input_percentiles:
+                            for pca_components in [8, None]:
+                                
+                                input_encoder = InputEncoder(
                                     lag1 = long_lag, 
                                     lag2 = short_lag, 
                                     future_offset = future_lag, 
                                     thresh_percentile = input_threshold_percentile, 
                                     binning = binning, 
-                                    pairwise_products = pairwise_products)
+                                    pairwise_products = pairwise_products, 
+                                    pca_components = pca_components)
                                     
-                                    
-                            encoded_train_x = input_encoder.transform(training_days, fit=True)
-                            for pca_components in [8, None]:
-                                if pca_components is not None:
-                                    pca = sklearn.decomposition.RandomizedPCA(pca_components)
-                                    train_x = pca.fit_transform(encoded_train_x.T).T
-                                else:
-                                    pca = None
-                                    train_x = encoded_train_x
-
+                                train_x = input_encoder.transform(training_days, fit=True)
+                            
                                 # to avoid trivial predictions at least make the future percentile greater than the number of 
                                 # ticks into the future we're looking
-                                for output_threshold_percentile in [p for p in percentiles if p >= input_threshold_percentile and p <= future_lag]:
+                                for output_threshold_percentile in [p for p in output_percentiles if p >= input_threshold_percentile and p <= future_lag]:
                                     print 
                                     print " --- lag1 =", long_lag, \
                                         " | lag2 =", short_lag, \
@@ -496,17 +534,13 @@ def param_search(training_days, testing_days,
                                         "count(-1) = ", np.sum(train_y == -1)
                                     sys.stdout.flush()
                                     
-                                    encoded_test_x = input_encoder.transform(testing_days, fit=False)
+                                    test_x = input_encoder.transform(testing_days, fit=False)
                                     test_y = output_encoder.transform([day[predict_idx, :] for day in testing_days], fit=False)
                                     
                                     print "Testing output stats: count(0) = ", np.sum(test_y == 0), "count(1) = ", np.sum(test_y == 1), "count(-1) = ", np.sum(test_y == -1)
                                     print 
                                     sys.stdout.flush()
                                     
-                                    if pca_components is None:
-                                        test_x = encoded_test_x
-                                    else:
-                                        test_x = pca.transform(encoded_test_x.T).T
                                         
                                     for loss in losses:
                                         for penalty in penalties:
@@ -681,7 +715,7 @@ def param_search(training_days, testing_days,
                                                                         sys.stdout.flush()
                                                                 
                                                             
-                                                                        if recall > best_result.recall:
+                                                                        if recall > best_result.train_recall:
                                                                             result = Result(
                                                                                 test_score, test_prec, test_recall, test_spec, 
                                                                                 score, precision, recall, specificity, 
@@ -691,7 +725,6 @@ def param_search(training_days, testing_days,
                                                                                 pred, 
                                                                                 input_encoder = input_encoder, 
                                                                                 output_encoder = output_encoder, 
-                                                                                pca = pca,
                                                                                 models = models,
                                                                                 combiner= combiner,
                                                                                 rejector = rejector,
