@@ -2,7 +2,7 @@
 """Move a set of ticks in csv.gz format to s3. Can take directory or file
 
 Usage:
-s3_move_ticks.py <directory_or_file> <-q queue_name> [-f create buckets if they don't exist] 
+s3_move_ticks.py <directory_or_file> <-n do not queue> <-q queue_name> [-f create buckets if they don't exist] 
 
 """
 import os

@@ -4,3 +4,4 @@ store/
 *.swp
 *.pid
 *.o
+*.pyc
