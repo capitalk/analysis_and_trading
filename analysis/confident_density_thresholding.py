@@ -6,12 +6,16 @@ class ConfidentClassifier:
 			n_mixture_components = 5, 
 			neutral_class = 0, 
 			covariance_type = 'full',
-			n_iters = 10):
+			n_iters = 10, 
+			n_restarts = 3, 
+			cooling = 1.0):
 		self.neutral_class = neutral_class
 		self.target_precision = target_precision
 		self.n_iters = n_iters 
+		self.n_restarts = n_restarts
 		self.n_mixture_components = n_mixture_components
 		self.covariance_type = covariance_type
+		self.cooling = cooling 
 		self.models = []
 		self.thresholds = [] 
 		self.classes = None
@@ -28,22 +32,31 @@ class ConfidentClassifier:
 		
 		for curr_iter in xrange(self.n_iters):
 			progress = float(curr_iter+1) / self.n_iters
-			cutoff = 0.5 ** ( (1-progress)**2) * self.target_precision 
-			print "*** Iter %d (discounted precision = %s) ***" % (curr_iter +1, cutoff)
-			
+			cutoff = self.cooling ** ( (1-progress)**2) * self.target_precision 
+			print "*** Iter %d (target precision = %s) ***" % (curr_iter +1, cutoff)
+			recalls = []
+				
 			for i,c in enumerate(self.active_classes):
-				model = sklearn.mixture.GMM(
-					n_components=self.n_mixture_components, 
-					cvtype = self.covariance_type)
+				
 				
 				class_mask = (Y == c) 
+				n_class = np.sum(class_mask)
 				X_slice = X[class_mask & mask, :]
+				n_slice = X_slice.shape[0]
+				#print "Slice size = %d / %d (total for %d)" % (n_slice, n_class, c)
+				if n_slice == 0:
+					raise RuntimeError("Failed to converge")
 				
-				model.fit(X_slice)
+				if curr_iter < self.n_restarts:
+					model = sklearn.mixture.GMM(
+						n_components=self.n_mixture_components, 
+						cvtype = self.covariance_type)
+					model.fit(X_slice)
+				else: 
+					model = self.models[i]
+					model.fit(X_slice, init_params = 'wc')
 				
 				
-				#precisions = densities.copy()
-				#recalls = densities.copy()
 				# descending log probs
 				thresholds = []
 				scores = sklearn.mixture.lmvnpdf(X, model.means, model.covars, self.covariance_type)
@@ -53,24 +66,31 @@ class ConfidentClassifier:
 					precision = None
 					recall = None
 					threshold = None
-					for j, t in enumerate(reversed(np.sort(cluster_scores))):
+					
+					pred_pos = None
+					for counter, t in enumerate(np.sort(cluster_scores)[::-1]):
 						pred_pos = cluster_scores >= t
 						n_pred_pos = np.sum(pred_pos)
 						correct = pred_pos & class_mask
 						n_correct = np.sum(correct)
 						p = float(n_correct) / n_pred_pos
-						r = float(n_correct) / np.sum(class_mask)
+						r = float(n_correct) / n_class
 						
-						if p < cutoff and j > 20: 
+						
+						# as soon as we get to desired precision, stop
+						if p < cutoff and counter > 50: 
 							break
 						elif p >= cutoff:
-							overall_kept += pred_pos
 							precision = p
 							recall = r 
 							threshold = t 
-							
 					thresholds.append(threshold)
+					
+					if threshold is not None: 
+						overall_kept += (cluster_scores >= threshold)
+					
 					print "Class %d, cluster %d: threshold = %s, precision = %s, recall = %s" % (c, cluster_id, threshold, precision, recall)
+					
 					
 					keep = overall_kept > 0
 					mask[class_mask & keep] = 1
@@ -81,6 +101,11 @@ class ConfidentClassifier:
 					else:
 						self.models[i] = model 
 						self.thresholds[i] = thresholds
+				overall_recall = np.sum(overall_kept > 0, dtype='float') / n_class
+				recalls.append(overall_recall)
+				print "Overall recall for class",c, "=", overall_recall  
+			hmean = len(recalls) / np.sum(1.0 / np.array(recalls))
+			print "Mean recall:", hmean 
 					
 	def predict(self, X):
 		n_samples = X.shape[0]
