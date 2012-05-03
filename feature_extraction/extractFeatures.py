@@ -33,7 +33,11 @@ parser.add_option("-n", "--num_processors", dest="num_processors", type="int", d
 print "Args = ", args
 print "Options = ", options
 
-timescales = [("1s", 1000), ("5s", 5000),  ("50s", 50000) ]
+if options.aggregate:
+	timescales = [("1s", 1000), ("5s", 5000),  ("50s", 50000) ]
+else:
+	timescales = [("1s", 1000)]
+	
 extractor = FeaturePipeline(timescales=timescales)
 extractor.add_feature('t', millisecond_timestamp)
 extractor.add_feature('bid', best_bid)
@@ -57,8 +61,8 @@ extractor.add_feature('filled', fill_volume, sum_100ms=True)
 extractor.add_feature('canceled', canceled_volume, sum_100ms=True)
 extractor.add_feature('insertion_flow', insertion_flow)
 
+extractor.add_reducer('mean',np.mean)
 if options.aggregate: 
-    extractor.add_reducer('mean',np.mean)
     extractor.add_reducer('std', np.std)
     extractor.add_reducer('max', np.max)
     extractor.add_reducer('min', np.min)
