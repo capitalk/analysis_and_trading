@@ -27,12 +27,17 @@ parser.add_option("-c", "--cloud", dest="use_cloud", action="store_true", defaul
 parser.add_option("-s", "--cloud_sim", dest="cloud_sim", action="store_true", default=False, help="use cloud simulator")
 parser.add_option("-a", "--aggregate", dest="aggregate", action="store_true", default=False, help="aggregate features over longer time scales")
 parser.add_option("--heap_profile", dest="heap_profile", action='store_true', default=False, help="print information about live heap objects")
+parser.add_option("-n", "--num_processors", dest="num_processors", type="int", default=0, help="number of processors when not using cloud")
 
 (options, args) = parser.parse_args()
 print "Args = ", args
 print "Options = ", options
 
-timescales = [("1s", 1000), ("5s", 5000),  ("50s", 50000), ("500s", 500000)]
+if options.aggregate:
+	timescales = [("1s", 1000), ("5s", 5000),  ("50s", 50000) ]
+else:
+	timescales = [("1s", 1000)]
+	
 extractor = FeaturePipeline(timescales=timescales)
 extractor.add_feature('t', millisecond_timestamp)
 extractor.add_feature('bid', best_bid)
@@ -135,6 +140,7 @@ if len(args) != 1:
     parser.print_help()
 else:
     cloud.config.max_transmit_data = 56700000
+    cloud.config.num_procs = options.num_processors
     if options.cloud_sim: 
         cloud.start_simulator()
     else:
