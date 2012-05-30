@@ -25,6 +25,9 @@ LIBS= -L/usr/local/src/quickfix/lib/ \
 CFLAGS=-Wall -std=c++0x -pthread -O3 
 LDFLAGS=-static
 
+PROTOBUF_OBJS = spot_fx_md_1.pb.o \
+				capk_globals.pb.o 
+				
 
 ifeq ($(dbg),1)
         CFLAGS = -Wall -std=c++0x -pthread -DDEBUG -ggdb -g # -DDEBUG_BOOK
@@ -32,14 +35,17 @@ endif
 
 LDFLAGS=-static
 
-tick_subscribe : main.o spot_fx_md_1.pb.o KTimeUtils.o
-	$(CC) $(CFLAGS) main.o spot_fx_md_1.pb.o KTimeUtils.o $(LIBS) -o $@ 
+tick_subscribe : main.o $(PROTOBUF_OBJS) KTimeUtils.o
+	$(CC) $(CFLAGS) main.o $(PROTOBUF_OBJS) KTimeUtils.o $(LIBS) -o $@ 
 
-main.o: main.cpp
-	$(CC) -o $@ -c $(INCLUDE) $(CFLAGS) main.cpp 
+main.o: tick_subscribe.cpp
+	$(CC) -o $@ -c $(INCLUDE) $(CFLAGS) tick_subscribe.cpp 
 
 spot_fx_md_1.pb.o: $(PROTO)/spot_fx_md_1.pb.cc $(PROTO)/spot_fx_md_1.pb.h
 	$(CC) -o $@ -c $(INCLUDE) $(CFLAGS) $(PROTO)/spot_fx_md_1.pb.cc 
+
+capk_globals.pb.o: $(PROTO)/capk_globals.pb.cc $(PROTO)/capk_globals.pb.h
+	$(CC) -o $@ -c $(INCLUDE) $(CFLAGS) $(PROTO)/capk_globals.pb.cc 
 
 KTimeUtils.o: $(UTILS)/KTimeUtils.cpp $(UTILS)/KTimeUtils.h
 	$(CC) -o $@ -c $(INCLUDE) $(CFLAGS) $(UTILS)/KTimeUtils.cpp

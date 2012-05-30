@@ -15,27 +15,30 @@ main(int argc, char** argv)
     int rc;
     std::cout << "Connecting to server...\n";
     zmq::socket_t subscriber(context, ZMQ_SUB);
-    subscriber.connect("tcp://127.0.0.1:5271");
-    subscriber.connect("tcp://127.0.0.1:5272");
-    subscriber.connect("tcp://127.0.0.1:5273");
+    subscriber.connect("tcp://127.0.0.1:9000");
+    //subscriber.connect("tcp://127.0.0.1:5271");
+    //subscriber.connect("tcp://127.0.0.1:5272");
+    //subscriber.connect("tcp://127.0.0.1:5273");
     //const char filter[]  = {10};
     const char* filter = "";
     subscriber.setsockopt(ZMQ_SUBSCRIBE, filter, strlen(filter));
     GOOGLE_PROTOBUF_VERIFY_VERSION;
-    capkproto::venue_bbo bbo;
+    capkproto::instrument_bbo bbo;
 
     while (1) {
         zmq::message_t msg;
         rc = subscriber.recv(&msg);
         assert(rc);
         bbo.ParseFromArray(msg.data(), msg.size());
-        //std::cout << bbo.DebugString() << "\n";
-        std::cout << "Venue : " << bbo.venue() << "\n";
-        std::cout << "Name : " << bbo.name() << "\n";
-        std::cout << "Bid Size : " << (double)bbo.bid_size() << "\n";
-        std::cout << "Bid Price: " << (double)bbo.bid_price() << "\n";
-        std::cout << "Ask Size : " << (double)bbo.ask_size() << "\n";
-        std::cout << "Ask Price: " << (double)bbo.ask_price() << "\n";
+    //    std::cout << bbo.DebugString() << "\n";
+        std::cout << "Symbol   : " << bbo.symbol() << "\n";
+        std::cout << "BB MIC   : " << bbo.bb_mic() << "\n";
+        std::cout << "BB Price : " << (double)bbo.bb_price() << "\n";
+        std::cout << "BB Size  : " << (double)bbo.bb_size() << "\n";
+
+        std::cout << "BA MIC   : " << bbo.ba_mic() << "\n";
+        std::cout << "BA Price : " << (double)bbo.ba_price() << "\n";
+        std::cout << "BA Size  : " << (double)bbo.ba_size() << "\n";
     }
     google::protobuf::ShutdownProtobufLibrary();
 
