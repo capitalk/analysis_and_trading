@@ -33,6 +33,8 @@ ifeq ($(dbg),1)
         CFLAGS = -Wall -std=c++0x -pthread -DDEBUG -ggdb -g # -DDEBUG_BOOK
 endif
 
+all: protos tick_subscribe
+
 LDFLAGS=-static
 
 tick_subscribe : main.o $(PROTOBUF_OBJS) KTimeUtils.o
@@ -51,7 +53,7 @@ KTimeUtils.o: $(UTILS)/KTimeUtils.cpp $(UTILS)/KTimeUtils.h
 	$(CC) -o $@ -c $(INCLUDE) $(CFLAGS) $(UTILS)/KTimeUtils.cpp
 
 protos : 
-	cd $(PROTO) && make
+	cd $(PROTO) && make 
 
 clean :
 	rm -f *.o tick_subsribe
