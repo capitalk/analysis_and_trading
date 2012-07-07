@@ -36,7 +36,7 @@ print "Options = ", options
 if options.aggregate:
 	timescales = [("1s", 1000), ("5s", 5000),  ("50s", 50000) ]
 else:
-	timescales = [("1s", 1000)]
+	timescales = []
 	
 extractor = FeaturePipeline(timescales=timescales)
 extractor.add_feature('t', millisecond_timestamp)
@@ -44,8 +44,8 @@ extractor.add_feature('bid', best_bid)
 extractor.add_feature('offer', best_offer)
 extractor.add_feature('bid_range', bid_range)
 extractor.add_feature('offer_range', offer_range)
-extractor.add_feature('spread', spread)
-extractor.add_feature('midprice', midprice)
+# extractor.add_feature('spread', spread)
+# extractor.add_feature('midprice', midprice)
 extractor.add_feature('weighted_total_price', volume_weighted_overall_price)
 extractor.add_feature('offer_vol', best_offer_volume)
 extractor.add_feature('bid_vol', best_bid_volume)
@@ -61,13 +61,14 @@ extractor.add_feature('filled', fill_volume, sum_100ms=True)
 extractor.add_feature('canceled', canceled_volume, sum_100ms=True)
 extractor.add_feature('insertion_flow', insertion_flow)
 
-extractor.add_reducer('mean',np.mean)
+
 if options.aggregate: 
-    extractor.add_reducer('std', np.std)
-    extractor.add_reducer('max', np.max)
-    extractor.add_reducer('min', np.min)
-    extractor.add_reducer('slope', ols_1000x, uses_time= True)
-    extractor.add_reducer('mcr', mean_crossing_rate)
+  extractor.add_reducer('mean',np.mean)
+  extractor.add_reducer('std', np.std)
+  extractor.add_reducer('max', np.max)
+  extractor.add_reducer('min', np.min)
+  extractor.add_reducer('slope', ols_1000x, uses_time= True)
+  extractor.add_reducer('mcr', mean_crossing_rate)
 
 
  # file exists and 'finished' flag is true 
