@@ -10,13 +10,11 @@ from optparse import OptionParser
 import s3_multipart_upload
 import s3_download_file
 import boto
-import mics
 import time
 import h5py
 from boto.sqs.message import MHMessage
 
-feature_extrator = "~/analysis_and_trading/feature_extraction/extractFeatures.py"
-FEATURE_DIR = STORAGE_PREFIX + "features/"
+feature_extractor = "~/analysis_and_trading/feature_extraction/extractFeatures.py"
 
 
 BUCKET_PREFIX="capk-"
@@ -49,7 +47,7 @@ if __name__ == "__main__":
     parser.add_option("-t", "--terminate", dest="terminate", help="Terminate instance when done", default=False)
     parser.add_option("-e", "--ephemeral", dest="ephemeral", help="Use ephemeral storage on EC2", default=False)
     parser.add_option("-r", "--max_retries", dest="max_retries", help="max number of retries before we accept queue is empty", default=3)
-    parser.add_option("-w", "--retry_wait", dest="retry_wait", "time to sleep between retries", default=10)
+    parser.add_option("-w", "--retry_wait", dest="retry_wait", help="time to sleep between retries", default=10)
 
     (options, args) = parser.parse_args()
 
@@ -58,6 +56,9 @@ if __name__ == "__main__":
       STORAGE_PREFIX = "/media/ephemeral0/"
     else:
       STORAGE_PREFIX = "/home/ec2-user/"
+
+    FEATURE_DIR = STORAGE_PREFIX + "features/"
+
 
     # Feature output directory - MUST HAVE TRAILING SLASH
     print "Reading from queue: ", options.inqueue
