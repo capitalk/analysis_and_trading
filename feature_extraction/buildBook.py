@@ -328,13 +328,13 @@ class V3_Parser:
 def read_books_from_file(f, debug=False, end=None): 
     header = {}
     orderbooks = [] 
-    peek_str = f.read(100)
+    peek_str = f.read(1000)
     f.seek(0)
     # disable the GC since a bug in older python interpreters stupidly scans
     # a list for garbage every time you append to it
     gc.disable()
     print "Parsing order books..." 
-    if peek_str.startswith('V3'):
+    if peek_str.startswith('V3') or '\nV3' in peek_str:
         parser = V3_Parser()
         header, orderbooks = parser.parse(f, debug, end)
     else:
