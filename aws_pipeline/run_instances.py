@@ -15,22 +15,26 @@ import boto
 import boto.ec2.blockdevicemapping
 from boto.ec2.blockdevicemapping import BlockDeviceType, BlockDeviceMapping
 from boto.sqs.message import MHMessage
+import atexit 
 
+SSH_COMMAND= "ssh -i ~/.ec2/capk.key -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "
 
-SSH_COMMAND= "ssh -i ~/analysis_and_trading//aws/capk.pem -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "
+def exec_remote(inst, command, verbose=False):
+  local_command = SSH_COMMAND + " ec2-user@" + inst.dns_name + " \"" + command + "\""
+  print "Running: ", local_command
+  process = Popen(local_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+  return process.communicate()
+
 
 BUCKET_PREFIX="capk-"
 
 SECURITY_GROUPS = ['capk']
 
-def clean_up_and_die(instances, status=0):
-  for instance in instances:
-    instance.terminate()
-  print "Exiting with status", status
-  sys.exit(status)
 
 def start_instances(ec2cxn, instance_count, image_id, use_ephemeral = False, instance_type="c1.xlarge"):
+    
     print "Attempting to start ", instance_count, " instances of image: ", image_id     
+    
     if use_ephemeral:
         dev_map = BlockDeviceMapping()
         sdb1 = BlockDeviceType()
@@ -53,12 +57,21 @@ def start_instances(ec2cxn, instance_count, image_id, use_ephemeral = False, ins
            instance_type=instance_type)
 
     instances = reservation.instances
+    # never leave instances running at the end of the script
+    def kill_instances():
+      for instance in instances:
+        instance.update()
+        if instance.state != 'terminated':
+          print "Killing ", instance 
+          instance.terminate()
+    atexit.register(kill_instances)
+
     print "Started ", instance_count, " instances"
     for i in instances:
-        print "==>", i.id
-    # TODO: Add a 'kill all these instances' function
+        print "  =>", i.id
     if len(instances) != instance_count:
       print "Expected %d instances, got %d" % (instance_count, len(instances))
+       
     return instances
 
 
@@ -77,21 +90,23 @@ if __name__ == "__main__":
 
     (options, args) = parser.parse_args()
 
+    ec2cxn = boto.connect_ec2()
+    if ec2cxn is None:
+        print "ec2 connection failed"
+        raise RuntimeError("ec2 connection failed")
     if options.image_id is None:
         print "ERROR - Must contain an image identifier to launch"
-        print __doc__
-        # TODO: Print a list of our available AMI's 
+        print "Choose on of the following:" 
+        for image in ec2cxn.get_all_images(owners=['self']):
+          print "   ", image.id, ":", image.name, "-",  image.architecture
+        print
+        parser.print_help()
         sys.exit()
 
     s3cxn = boto.connect_s3()
     if s3cxn is None:
         print "s3 connection failed"
         raise RuntimeError("s3 connection failed")
-    ec2cxn = boto.connect_ec2()
-
-    if ec2cxn is None:
-        print "ec2 connection failed"
-        raise RuntimeError("ec2 connection failed")
 
     sqscxn = boto.connect_sqs()
     if sqscxn is None:
@@ -101,26 +116,18 @@ if __name__ == "__main__":
     instances = start_instances(ec2cxn, options.instance_count, options.image_id,
       use_ephemeral = options.ephemeral, 
       instance_type = options.instance_type)
-
+ 
     print "Waiting for all instances to enter running state"
 
     def instance_is_running(instance):
-      if instance.state != "running": 
-        return False
-      # hackish test to check whether services have started by trying 
-      # to SSH and ls 
-      else:
-        command = SSH_COMMAND + "ec2-user@" + instance.dns_name + " \" ls  \""
-        process = Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        (out, err) = process.communicate()
-        return len(out) > 0
+      return instance.state == "running" 
 
     def remove_running(instances):
       return filter(lambda i: not instance_is_running(i), instances)
 
     max_retries = 10
     retry = 0
-    wait_time = 3 
+    wait_time = 5 
     non_running = remove_running(instances)
     while len(non_running) > 0:
         for instance in instances:
@@ -128,17 +135,20 @@ if __name__ == "__main__":
             instance.update()
             if instance.state == "terminated":
                print "Instance " + instance + " unexpectedly entered terminated state - exiting"
-               clean_up_and_die(instances, 3)
+               # it's ok to just die here since kill_instances is registered to run atexit
+               sys.exit(3)
           except:
             print "Unexpected exception while updating instance - exiting" 
-            clean_up_and_die(instances, 3)
-        print "Waiting %d seconds" % wait_time
+            print sys.exc_info()
+            sys.exit(3)
+        sys.stdout.write("-")
+        sys.stdout.flush()
         time.sleep(wait_time)
         non_running = remove_running(non_running)
         retry += 1
         if retry > max_retries: 
           print "After %d retries there are still %d instances which aren't running" % (max_retries, len(non_running))
-          clean_up_and_die(instances)
+          sys.exit(3)
     
     print "Services started"
 
@@ -149,18 +159,47 @@ if __name__ == "__main__":
     n_work_items = inq.count() 
     
     print "Starting jobs" 
+    
     remote_command = "source /home/ec2-user/.bash_profile && python" \
       + "/home/ec2-user/analysis_and_trading/aws_pipeline/process_ticks.py -i %s -o %s --terminate" \
       % (options.inqueue, options.outqueue)
     if options.ephemeral:
       remote_command += " --ephemeral" 
 
-    for inst in instances:
-        local_command = SSH_COMMAND + " ec2-user@" + inst.dns_name + " \"" + remote_command + "\""
-        print "Running: ", local_command
-        sp = Popen(local_command, shell=True)
-        print "Popen result: ", sp
-                
+    
+
+    # try running remote command, return true if it needs to be retried
+    def try_remote_exec(instance):
+        # first check if we can ls remotely-- if not, then abandon ship 
+      try:
+        (ls_output, _) = exec_remote(instance, "ls", verbose=False)
+        if len(ls_output) == 0:
+          return True          
+        exec_remote(instance, remote_command, verbose=True)
+        return False
+      except: 
+        return True
+
+      
+    n_instances = len(instances)
+    unfinished = filter(try_remote_exec, instances)
+    retry = 0 
+    wait_time = 20
+    max_retries = 30 
+    while retry < max_retries:
+      unfinished = filter(try_remote_exec, unfinished)
+      if len(unfinished) == 0:
+        break
+      else:
+        time.sleep(wait_time)
+        retry += 1
+        sys.stdout.write("-")
+        sys.stdout.flush()
+
+    if retry >= max_retries:
+      print "Couldn't connect to %d of %d instances, giving up" % ( len(unfinished), n_instances)
+      sys.exit(3) 
+    
     retry = 0
     retry_wait = 60
     max_retries = 10
@@ -169,7 +208,8 @@ if __name__ == "__main__":
         m = outq.read() 
         if m is not None:
             print "Received message: ", m.get_body()
-            if 'input_file' in m: n_done += 1
+            if 'input_file' in m: 
+              n_done += 1
             outq.delete_message(m)
             retry = 0
         else:
@@ -178,7 +218,7 @@ if __name__ == "__main__":
 
     if retry >= max_retries: 
       print "Too many retries!" 
-      clean_up_and_die(instances)
+      sys.exit(3)
     else:
       print "Done!" 
 
