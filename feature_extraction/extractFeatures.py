@@ -1,16 +1,10 @@
-
-
 import numpy as np  
-import scipy.stats
-import pylab 
 
-import buildBook
 
 from features import * 
-from aggregators import approx_skewness, ols, ols_1000x, mean_crossing_rate
-import infer_actions
+from aggregators import ols_1000x, mean_crossing_rate
 from featurePipeline import FeaturePipeline
-from optparse import *
+from optparse import OptionParser
 import os, os.path
 import cloud, h5py, gzip, gc, datetime
 
@@ -44,23 +38,57 @@ extractor.add_feature('bid', best_bid)
 extractor.add_feature('offer', best_offer)
 extractor.add_feature('bid_range', bid_range)
 extractor.add_feature('offer_range', offer_range)
-# extractor.add_feature('spread', spread)
-# extractor.add_feature('midprice', midprice)
-extractor.add_feature('weighted_total_price', volume_weighted_overall_price)
+
+extractor.add_feature('spread', spread)
+
+extractor.add_feature('locked', locked, sum_100ms=True)
+extractor.add_feature('crossed', crossed, sum_100ms=True)
+
+extractor.add_feature('midprice', midprice)
+extractor.add_feature('bid_vwap', bid_vwap)
+extractor.add_feature('offer_vwap', offer_vwap)
+
+extractor.add_feature('bid_slope', bid_slope)
+extractor.add_feature('offer_slope', offer_slope)
+
+#extractor.add_feature('weighted_total_price', volume_weighted_overall_price)
+
 extractor.add_feature('offer_vol', best_offer_volume)
 extractor.add_feature('bid_vol', best_bid_volume)
+
 extractor.add_feature('total_bid_vol', bid_volume)
 extractor.add_feature('total_offer_vol', offer_volume)
 extractor.add_feature('t_mod_1000', fraction_of_second, use_window_reducers=False)
 extractor.add_feature('message_count', message_count, sum_100ms=True)
 # V3 orderbook action  features 
-extractor.add_feature('added', total_added_volume, sum_100ms=True)
-extractor.add_feature('deleted', total_deleted_volume, sum_100ms=True)
-extractor.add_feature('net_action_volume', net_volume, sum_100ms=True)
-extractor.add_feature('filled', fill_volume, sum_100ms=True)
-extractor.add_feature('canceled', canceled_volume, sum_100ms=True)
-extractor.add_feature('insertion_flow', insertion_flow)
+#extractor.add_feature('insertion_flow', insertion_flow)
+extractor.add_feature('bid_tr8dr', bid_tr8dr)
+extractor.add_feature('offer_tr8dr', offer_tr8dr)
+extractor.add_feature('tr8dr', tr8dr)
+extractor.add_feature('added_total_bid_vol', added_bid_volume, sum_100ms=True)
+extractor.add_feature('added_total_bid_count', added_bid_count, sum_100ms=True)
+extractor.add_feature('added_total_offer_vol', added_offer_volume, sum_100ms=True)
+extractor.add_feature('added_total_offer_count', added_offer_count, sum_100ms=True)
 
+extractor.add_feature('added_best_bid_vol', added_best_bid_volume, sum_100ms=True)
+extractor.add_feature('added_best_bid_count', added_best_bid_count, sum_100ms=True)
+extractor.add_feature('added_best_offer_vol', added_best_offer_volume, sum_100ms=True)
+extractor.add_feature('added_best_offer_count', added_best_offer_count, sum_100ms=True)
+
+extractor.add_feature('deleted_total_bid_vol', deleted_bid_volume, sum_100ms=True)
+extractor.add_feature('deleted_total_bid_count', deleted_bid_count, sum_100ms=True)
+extractor.add_feature('deleted_total_offer_vol', deleted_offer_volume, sum_100ms=True)
+extractor.add_feature('deleted_total_offer_count', deleted_offer_count, sum_100ms=True)
+
+extractor.add_feature('filled_bid_vol', filled_bid_volume, sum_100ms=True)
+extractor.add_feature('filled_bid_count', filled_bid_count, sum_100ms=True)
+extractor.add_feature('filled_offer_vol', filled_offer_volume, sum_100ms=True)
+extractor.add_feature('filled_offer_count', filled_offer_count, sum_100ms=True)
+
+extractor.add_feature('canceled_bid_vol', canceled_bid_volume, sum_100ms=True)
+extractor.add_feature('canceled_bid_count', canceled_bid_count, sum_100ms=True)
+extractor.add_feature('canceled_offer_vol', canceled_offer_volume, sum_100ms=True)
+extractor.add_feature('canceled_offer_count', canceled_offer_count, sum_100ms=True)
 
 if options.aggregate: 
   extractor.add_reducer('mean',np.mean)

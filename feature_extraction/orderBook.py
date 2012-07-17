@@ -1,7 +1,3 @@
-from operator import attrgetter, itemgetter, methodcaller
-
-import orderBookConstants as obc
-
     
 class Order:
     def __init__(self, 
@@ -86,42 +82,82 @@ class OB:
         print self.__str__()
         
     def compute_order_flow_stats(self): 
-        if not hasattr(self, 'added_volume'):
-            self.added_volume = sum([a.volume for a in self.actions if a.action_type == ADD_ACTION_TYPE])
-            self.deleted_volume = sum([a.volume for a in self.actions if a.action_type == DELETE_ACTION_TYPE])
-            #self.net_volume = self.added_volume - self.deleted_volume
-            change_at_price = {}
-            for a in self.actions: 
-                sign = 1 if a.action_type == ADD_ACTION_TYPE else (-1)
-                newval = change_at_price.get(a.price, 0) + sign * a.volume 
-                change_at_price[a.price] = newval 
-            self.change_at_price = change_at_price
-            insertion_flow = 0 
-            fill_volume = 0 
-            canceled_volume = 0 
-            for a in self.actions: 
-                if a.action_type == ADD_ACTION_TYPE:
-                    if a.side == OFFER_SIDE: 
-                        base_price = self.offers[0].price
-                        cumulative_volume = sum([order.size for order in self.offers if order.price <= a.price])
-                    else: 
-                        base_price = self.bids[0].price
-                        cumulative_volume = sum([order.size for order in self.bids if order.price >= a.price])
-                    prct_change = (a.price - base_price) / base_price 
-                    volume_weight = float(a.volume) / (cumulative_volume + a.volume) 
-                    insertion_flow += prct_change * volume_weight  
-                elif a.action_type == DELETE_ACTION_TYPE:
-                    if a.side == OFFER_SIDE:
-                        if a.price <= self.offers[0].price: 
-                            fill_volume += a.volume 
-                        else:
-                            canceled_volume += a.volume 
-                    else:
-                        if a.price >= self.bids[0].price:
-                            fill_volume += a.volume
-                        else:
-                            canceled_volume += a.volume 
-            self.fill_volume = fill_volume 
-            self.canceled_volume = canceled_volume 
-            self.insertion_flow = insertion_flow 
+      #self.added_volume = sum([a.volume for a in self.actions if a.action_type == ADD_ACTION_TYPE])
+      #self.deleted_volume = sum([a.volume for a in self.actions if a.action_type == DELETE_ACTION_TYPE])
+      #change_at_price = {}
+      #      for a in self.actions: 
+      #          sign = 1 if a.action_type == ADD_ACTION_TYPE else (-1)
+      #          newval = change_at_price.get(a.price, 0) + sign * a.volume 
+      #          change_at_price[a.price] = newval 
+      #      self.change_at_price = change_at_price
+      self.bid_tr8dr = 0 
+      self.offer_tr8dr = 0
+
+      self.filled_bid_volume = 0
+      self.filled_bid_count = 0 
+      self.filled_offer_volume = 0
+      self.filled_offer_count = 0
+
+      self.canceled_bid_volume = 0 
+      self.canceled_bid_count = 0
+      self.canceled_offer_volume = 0
+      self.canceled_offer_count = 0
+
+      self.added_offer_volume = 0
+      self.added_offer_count = 0
+      self.added_bid_volume = 0
+      self.added_bid_count = 0
             
+      self.added_best_offer_volume = 0 
+      self.added_best_offer_count = 0
+      self.added_best_bid_volume = 0
+      self.added_best_bid_count = 0
+
+      best_offer_price = self.offers[0].price
+      best_bid_price = self.bids[0].price
+ 
+      for a in self.actions: 
+        p = a.price
+        v = a.volume
+        if a.action_type == ADD_ACTION_TYPE:
+          self.offer_tr8dr += (p - best_offer_price) / best_offer_price 
+          if a.side == OFFER_SIDE:
+            self.added_offer_volume += v
+            self.added_offer_count += 1
+            if p <= best_offer_price:
+              self.added_best_offer_volume += v
+              self.added_best_offer_count += 1
+                       
+            #base_price = best_offer_price
+            #cumulative_volume = sum([order.size for order in self.offers if order.price <= p])
+          else: 
+            self.bid_tr8dr += (p - best_bid_price) / best_bid_price 
+            self.added_bid_volume += v
+            self.added_bid_count += 1
+            if p >= best_bid_price:
+              self.added_best_bid_volume += v
+              self.added_best_bid_count += 1
+            #base_price = best_bid_price
+            #cumulative_volume = sum([order.size for order in self.bids if order.price >= p])
+        elif a.action_type == DELETE_ACTION_TYPE:
+          if a.side == OFFER_SIDE:
+            self.offer_tr8dr -= (p - best_offer_price) / best_offer_price 
+            if p <= best_offer_price: 
+              self.filled_offer_volume += v 
+              self.filled_offer_count += 1 
+            else:
+              self.canceled_offer_volume += v
+              self.canceled_offer_count += 1
+          else:
+            self.bid_tr8dr -= (p - best_bid_price) / best_bid_price 
+            if p >= best_bid_price:
+              self.filled_bid_volume += v
+              self.filled_bid_count += 1
+            else:
+              self.canceled_bid_volume += v
+              self.canceled_bid_count += 1
+      self.deleted_bid_volume = self.canceled_bid_volume + self.filled_bid_volume
+      self.deleted_bid_count = self.canceled_bid_count + self.filled_bid_count
+      self.deleted_offer_volume = self.canceled_offer_volume + self.filled_offer_volume 
+      self.deleted_offer_count = self.canceled_offer_count + self.filled_offer_count
+         

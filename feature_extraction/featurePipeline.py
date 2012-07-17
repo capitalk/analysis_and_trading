@@ -1,25 +1,13 @@
-import os, gc, zlib, bisect 
-import math, scipy, scipy.stats, scipy.signal
+import gc, bisect 
+import math
 import numpy as np
 import cloud
 import h5py 
-import cPickle
 
 import progressbar
 import buildBook 
 import aggregators
 
-
-def rolling_window(a, window):
-    """Directly taken from Erik Rigtorp's post to numpy-discussion.
-    <http://www.mail-archive.com/numpy-discussion@scipy.org/msg29450.html>"""
-    if window < 1:
-       raise ValueError, "`window` must be at least 1."
-    if window > a.shape[-1]:
-       raise ValueError, "`window` is too long."
-    shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
-    strides = a.strides + (a.strides[-1],)
-    return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
 # grouping sparse messages into frames whose time range is determined
 # by the variable scale (defaults to 1ms)
@@ -68,10 +56,12 @@ def features_from_books(books, feature_fns, feature_uses_prev_orderbook, show_pr
             else: timeseries = np.zeros(n, dtype='int')
             if feature_uses_prev_orderbook[name]:
                 for (i,book) in enumerate(validBooks):
+                    book.compute_order_flow_stats()
                     timeseries[i] = fn(prevBook, book)
                     prevBook = book 
             else:
                 for (i, book) in enumerate(validBooks):
+                    book.compute_order_flow_stats()
                     timeseries[i] = fn(book)
             result[name] = timeseries
         if show_progress: progress.update(featurenum)
@@ -235,14 +225,12 @@ class FeaturePipeline:
         start_indices = np.zeros(n)
         end_indices = np.zeros(n)
         empty_frames = np.zeros(n, dtype='bool')
-        last_nonempty_ms = np.zeros(n) 
         for (i, end_t) in enumerate(frame_times):
             start_t = end_t - 100 
             # start_indices exclude time (t - 100)
             start_idx = bisect.bisect_right(milliseconds, start_t)
             if milliseconds[start_idx] > end_t:
                 empty_frames[i] = True 
-                last_nonempty_ms = milliseconds[start_idx-1] 
             # start indices exclude time (t - 100)
             start_indices[i] = start_idx
             # end indices include time t
@@ -285,8 +273,6 @@ class FeaturePipeline:
         t = raw_features['t']
         n = len(t)
         
-        message_counts_per_big_frame = raw_features['message_count']
-        msg_count_cumulative_sums = np.cumsum(message_counts_per_big_frame) 
         
         small_frame_counts_per_big_frame = raw_features['1ms_frame_count']
         frame_count_cumulative_sums = np.cumsum(small_frame_counts_per_big_frame)
@@ -379,6 +365,8 @@ class FeaturePipeline:
         hdf.attrs['ccy'] = header['ccy']
         frames_1ms = aggregate_1ms_frames(raw_features, self.frame_reducers_1ms)
         del raw_features 
+        # save 1ms, 100ms and 'agg' as separate HDFs, without
+        # putting scale suffixes on the features 
         for name, vec in frames_1ms.items(): add_col(hdf, name + "/1ms", vec)
         
         frames_100ms = self.aggregate_100ms_frames(frames_1ms)

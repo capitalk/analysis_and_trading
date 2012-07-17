@@ -251,7 +251,7 @@ class V3_Parser:
     
     def start_new_orderbook(self, line): 
         # periodically clear the order cache so it doesn't eat all the memory 
-        if len(self.order_cache) > 10000:
+        if len(self.order_cache) > 50000:
             self.order_cache = {} 
         if self.currBook:
             self.books.append(self.currBook)
@@ -307,6 +307,8 @@ class V3_Parser:
                             price=float(price),
                             size=int(size)
                         )
+                        #if len(self.order_cache)  % 10000 == 0: 
+                        #  print len(self.order_cache)
                         self.order_cache[line] = order
                     self.currBook.add_order(order)
         except Exception as inst:
@@ -332,7 +334,7 @@ def read_books_from_file(f, debug=False, end=None):
     f.seek(0)
     # disable the GC since a bug in older python interpreters stupidly scans
     # a list for garbage every time you append to it
-    gc.disable()
+    #gc.disable()
     print "Parsing order books..." 
     if peek_str.startswith('V3') or '\nV3' in peek_str:
         parser = V3_Parser()
@@ -343,8 +345,8 @@ def read_books_from_file(f, debug=False, end=None):
         maxdepth = reduce(max, depths)
         ccy = orderbooks[0].bids[0].ccy
         header = { 'ccy' : ccy }    
-    gc.enable()
-    gc.collect()
+    #gc.enable()
+    #gc.collect()
     return header, orderbooks 
 
 

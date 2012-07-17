@@ -1,15 +1,52 @@
 import math 
 
+import numpy as np
 
 def spread(orderBook):
     return orderBook.offers[0].price - orderBook.bids[0].price 
     
+## is the market locked or crossed?
+def locked(ob):
+  return ob.offers[0].price == ob.bids[0].price
+
+def crossed(ob):
+  return ob.offers[0].price < ob.bids[0].price
+
+
+## difference between the best level and 5 levels away
+
 def bid_range(orderBook):
-    return orderBook.bids[0].price - orderBook.bids[-1].price
+    last_idx = min(4, len(orderBook.bids) - 1)
+    return orderBook.bids[0].price - orderBook.bids[last_idx].price
     
 def offer_range(orderBook):
-    return orderBook.offers[-1].price - orderBook.offers[0].price
+    last_idx = min(4, len(orderBook.offers) - 1)
+    return orderBook.offers[last_idx].price - orderBook.offers[0].price
 
+def bid_slope(ob):
+    last_idx = min(4, len(ob.bids) - 1)
+    first_price = ob.bids[0].price
+    cumulative_vol = 0
+    total = 0.0
+    for i in xrange(last_idx):
+      bid = ob.bids[i+1]
+      cumulative_vol += bid.size
+      delta_p = bid.price - first_price
+      total += delta_p / cumulative_vol 
+    return total / (last_idx+1)   
+
+def offer_slope(ob):
+    last_idx = min(4, len(ob.offers) - 1)
+    first_price = ob.offers[0].price
+    cumulative_vol = 0
+    total = 0.0
+    for i in xrange(last_idx):
+      offer = ob.offser[i+1]
+      cumulative_vol += offer.size
+      delta_p = offer.price - first_price
+      total += delta_p / cumulative_vol 
+    return total / (last_idx+1) 
+  
 def best_bid(orderBook):
     return orderBook.bids[0].price
 
@@ -20,28 +57,107 @@ def midprice(orderBook):
     return (orderBook.offers[0].price + orderBook.bids[0].price) / 2 
 
 def total_added_volume(ob):
-    ob.compute_order_flow_stats()
-    return ob.added_volume 
+    return ob.added_bid_volume  + ob.added_offer_volume
     
 def total_deleted_volume(ob):
-    ob.compute_order_flow_stats()
-    return ob.deleted_volume
+    return ob.deleted_bid_volume + ob.deleted_offer_volume
 
 def net_volume(ob):
-    ob.compute_order_flow_stats()
-    return ob.added_volume - ob.deleted_volume
+    return ob.added_bid_volume + ob.added_offer_volume \
+      - ob.deleted_bid_volume - ob.deleted_offer_volume
 
-def canceled_volume(ob):
-    ob.compute_order_flow_stats()
-    return ob.canceled_volume 
+
+## tr8dr's insertion flow 
+
+def bid_tr8dr(ob):
+    return ob.bid_tr8dr
+
+def offer_tr8dr(ob):
+    return ob.offer_tr8dr
+
+def tr8dr(ob):
+    return ob.bid_tr8dr + offer_tr8dr
+
+## Canceled = deleted from secondary levels 
+
+def canceled_bid_volume(ob):
+    return ob.canceled_bid_volume
+
+def canceled_bid_count(ob):
+    return ob.canceled_bid_count
+
+def canceled_offer_volume(ob):
+    return ob.canceled_offer_volume 
+
+def canceled_offer_count(ob):
+    return ob.canceled_offer_count
+
+def total_canceled_volume(ob):
+    return ob.canceled_bid_volume + ob.canceled_offer_volume
+
+
+## Filled = deleted from best level 
+
+def filled_bid_volume(ob):
+    return ob.filled_bid_volume
+
+def filled_bid_count(ob):
+    return ob.filled_bid_count
+
+def filled_offer_volume(ob):
+    return ob.filled_offer_volume
+
+def filled_offer_count(ob):
+    return ob.filled_offer_count 
+
+def total_filled_volume(ob):
+    return ob.filled_bid_volume  + ob.filled_offer_volume
     
-def fill_volume(ob):
-    ob.compute_order_flow_stats()
-    return ob.fill_volume 
-    
-def insertion_flow(ob):
-    ob.compute_order_flow_stats()
-    return ob.insertion_flow
+
+
+## Add 
+
+def added_offer_volume(ob):
+    return ob.added_offer_volume
+
+def added_offer_count(ob):
+    return ob.added_offer_count
+
+def added_bid_volume(ob):
+    return ob.added_bid_volume
+
+def added_bid_count(ob):
+    return ob.added_bid_count
+
+
+
+def added_best_offer_volume(ob):
+    return ob.added_best_offer_volume
+
+def added_best_offer_count(ob):
+    return ob.added_best_offer_count
+
+def added_best_bid_volume(ob):
+    return ob.added_best_bid_volume
+
+def added_best_bid_count(ob):
+    return ob.added_best_bid_count
+
+## Delete
+def deleted_offer_volume(ob):
+    return ob.deleted_offer_volume
+
+def deleted_offer_count(ob):
+    return ob.deleted_offer_count
+
+def deleted_bid_volume(ob):
+    return ob.deleted_bid_volume
+
+def deleted_bid_count(ob):
+    return ob.deleted_bid_count
+
+
+#############
 
 def millisecond_timestamp(orderBook): 
     return orderBook.lastUpdateTime 
@@ -91,22 +207,34 @@ def offer_volume(orderBook):
       orderBook.offerVolume = offerVolume 
       return offerVolume 
 
-# in millions 
 def best_offer_volume(orderBook): 
-    return float(orderBook.offers[0].size) / 1000000
+    return orderBook.offers[0].size
 
-# in millions
 def best_bid_volume(orderBook): 
-    return float(orderBook.bids[0].size) / 1000000 
+    return orderBook.bids[0].size 
 
-# prices from either side weighted by volume 
-def volume_weighted_overall_price(orderBook): 
+# volume weighted price of first five bids  
+def bid_vwap(ob): 
+    p = 0
+    v = 0  
+    i = 0 
+    for order in ob.bids:
+        p += order.price * order.size
+        v += order.size
+        i += 1
+        if i >= 4: break  
+    return p / v
+
+def offer_vwap(ob):
     p = 0 
-    for order in orderBook.bids: 
-        p += order.price * order.size 
-    for order in orderBook.offers:
-        p += order.price * order.size 
-    return p / (bid_volume(orderBook) + offer_volume(orderBook))
+    v = 0
+    i = 0
+    for order in ob.offers:
+      p += order.price * order.size 
+      v += order.size
+      i += 1
+      if i >= 4: break 
+    return p / v
 
 
 # average of volume weighted offer and bid prices
@@ -136,9 +264,6 @@ def log_best_volume_ratio(orderBook):
         return 0         
     else:
         return math.log(float(offerVol) / bidVol)
-
-def spread(orderBook):
-    return best_offer(orderBook) - best_bid(orderBook) 
 
 def fraction_of_second(orderBook): 
     t = millisecond_timestamp(orderBook)
@@ -203,9 +328,6 @@ def third_offer_digit_tail(orderBook):
 
 def fourth_bid_digit(orderBook):
     return nth_digit(orderBook.bids[0].price, 4)
-
-def fourth_bid_digit(orderBook):
-    return nth_digit_tail(orderBook.bids[0].price, 4)
 
 def fourth_offer_digit(orderBook): 
     return nth_digit(orderBook.offers[0].price, 4)
