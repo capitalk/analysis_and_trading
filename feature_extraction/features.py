@@ -1,7 +1,5 @@
 import math 
 
-import numpy as np
-
 def spread(orderBook):
     return orderBook.offers[0].price - orderBook.bids[0].price 
     
@@ -41,7 +39,7 @@ def offer_slope(ob):
     cumulative_vol = 0
     total = 0.0
     for i in xrange(last_idx):
-      offer = ob.offser[i+1]
+      offer = ob.offers[i+1]
       cumulative_vol += offer.size
       delta_p = offer.price - first_price
       total += delta_p / cumulative_vol 
@@ -76,7 +74,7 @@ def offer_tr8dr(ob):
     return ob.offer_tr8dr
 
 def tr8dr(ob):
-    return ob.bid_tr8dr + offer_tr8dr
+    return ob.bid_tr8dr + ob.offer_tr8dr
 
 ## Canceled = deleted from secondary levels 
 

@@ -117,71 +117,24 @@ def aggregate_1ms_frames(features, frame_reducers, output=True):
     return frames_1ms 
     
     
-def aggregate_window_worker(work):
-    fName = work['feature_name']
-    rName = work['reducer_name']
-    reducer = work['reducer']
-    scale = work['scale']
-    # stride used as an optimization for min/max to avoid redundant computation
-    
-    scale_name = work['scale_name']
-    frames = work['frames']
-    n = len(frames)
-    uses_time = work['reducer_uses_time']
-    if uses_time: t = work['t']
-    if 'time_stride' in work: index_stride = work['time_stride']  / 100 
-    else: index_stride = 1
-    
-    nframes_in_window = scale / 100 
-    window_start_indices = np.maximum(0, np.arange(n) - nframes_in_window)
-    
-    if reducer == np.mean:
-        aggregated = aggregators.quick_windowed_means(frames, window_start_indices)
-    elif reducer == np.max:
-        aggregated = aggregators.quick_windowed_max(frames, window_start_indices, index_stride)
-    elif reducer == np.min:
-        aggregated = aggregators.quick_windowed_min(frames, window_start_indices, index_stride)
-    else:
-        aggregated = np.zeros(n)
-        if uses_time: 
-            for (i, start_idx) in enumerate(window_start_indices):
-                end_idx = i+1
-                curr_slice = frames[start_idx:end_idx] 
-                time_slice = t[start_idx:end_idx]
-                aggregated[i] = reducer(time_slice, curr_slice)
-        else:
-            for (i, start_idx) in enumerate(window_start_indices):
-                end_idx = i+1
-                curr_slice = frames[start_idx:end_idx] 
-                aggregated[i] = reducer(curr_slice)
-    result = { 
-        'feature_name': fName, 
-        'reducer_name': rName, 
-        'scale_name': scale_name, 
-        'aggregated': aggregated, 
-    }
-    return result 
 
 #gzip, lzf, or None
 compression = 'lzf' 
 
 def add_col(hdf, name, data):
     #print "Adding column", name, " shape = ", data.shape
-    parts = name.split('/')
-    dirpath = '/'.join(parts[:-1])
-    if len(dirpath) > 0 and dirpath not in hdf:
-        #print "Creating HDF path", dirpath
-        hdf.create_group(dirpath)
-    
-    hdf.create_dataset(name, data=data, dtype=data.dtype, compression=compression, chunks=True)
+  parts = name.split('/')
+  dirpath = '/'.join(parts[:-1])
+  if len(dirpath) > 0 and dirpath not in hdf:
+    hdf.create_group(dirpath)
+  hdf.create_dataset(name, data=data, dtype=data.dtype, compression=compression, chunks=True)
 
-default_timescales = [ ("5s", 1000), ("50s", 10000)]
 class FeaturePipeline:
     
-    def __init__(self, timescales = default_timescales):
+    def __init__(self):
         self.feature_fns = {} 
         self.feature_uses_prev_orderbook = {} 
-        self.timescales = timescales
+
         # maps feature name to list of (name,fn) pairs
         self.feature_uses_reducers = {
             'time_since_last_message': True, 
@@ -190,9 +143,6 @@ class FeaturePipeline:
         }
         #maps feature name to single (name,fn) pair
         self.frame_reducers_1ms = {}
-        #maps reducer name to fn 
-        self.reducers = {}
-        self.reducer_uses_time = {} 
         self.sum_100ms_feature = {} 
             
 
@@ -207,10 +157,6 @@ class FeaturePipeline:
         self.feature_uses_reducers[name] = use_window_reducers 
         self.sum_100ms_feature[name] = sum_100ms 
          
-    def add_reducer(self, name, fn, uses_time=False):
-        self.reducers[name] = fn
-        self.reducer_uses_time[name] = uses_time
-
 
     def aggregate_100ms_frames(self, frames_1ms, output=True): 
         milliseconds = frames_1ms['t']
@@ -268,114 +214,39 @@ class FeaturePipeline:
         features_100ms['1ms_frame_count'] = small_frame_count 
 
         return features_100ms        
-        
-    def aggregate_windows(self, raw_features, hdf):
-        t = raw_features['t']
-        n = len(t)
-        
-        
-        small_frame_counts_per_big_frame = raw_features['1ms_frame_count']
-        frame_count_cumulative_sums = np.cumsum(small_frame_counts_per_big_frame)
-        
-        null_100ms_frames = raw_features['null_100ms_frame']
-        null_cumulative_sums = np.cumsum(null_100ms_frames)
-        
-        
-        binary_reducers = [("mean", np.mean)]
-        last_time_scale = 100 
-        # keep these for min and max 
-        minmax_results = {}
-        gc.disable() 
-        for scale_name, scale in self.timescales:
-            print "Generating jobs for", scale_name, "window aggregation..."
-            worklist = []
-            for fName, frames in raw_features.items():
-                print fName
-                if fName != 't' and self.feature_uses_reducers[fName]:
-                    if frames.dtype == 'bool': reducers = binary_reducers
-                    else: reducers = self.reducers.items()
-                    for rName, reducer in reducers:
-                        uses_time = self.reducer_uses_time[rName]
-                        work = { 
-                            'reducer': reducer,
-                            'feature_name': fName, 
-                            'reducer_name': rName, 
-                            'scale': scale, 
-                            'scale_name': scale_name, 
-                            'reducer_uses_time': uses_time, 
-                        }
-                        
-                        fr_name = fName + '/' + rName
-                        if (reducer == np.min or reducer == np.max) and fr_name in minmax_results:
-                            work['frames'] = minmax_results[fr_name] 
-                            work['time_stride'] = last_time_scale 
-                        else: 
-                            work['frames'] = frames
-                        if uses_time: work['t'] = t
-                        worklist.append(work)
-            jobids = cloud.mp.map(aggregate_window_worker, worklist, _fast_serialization=2)# _label='aggregate_windows', _high_cpu=True, _high_mem=True)
-            
-            #compute counts while the workers do their thing 
-            print "Computing message and frame counts..." 
-            window_small_frame_counts = np.zeros(n)
-            window_big_frame_counts = np.zeros(n)
-            window_len = scale / 100 
-            for i in xrange(n):
-                start_idx = max(i - window_len, 0)
-                if start_idx > 0: 
-                    prev_idx = start_idx - 1
-                    small_frame_count_cumsum_start = frame_count_cumulative_sums[prev_idx]
-                    null_cumsum_start = null_cumulative_sums[prev_idx]
-                else: 
-                    null_cumsum_start = 0
-                    small_frame_count_cumsum_start = 0 
-                window_small_frame_counts[i] = frame_count_cumulative_sums[i] - small_frame_count_cumsum_start 
-                null_sum = null_cumulative_sums[i] - null_cumsum_start 
-                window_big_frame_counts[i] = window_len - null_sum 
-           
-            add_col(hdf, "1ms_frame_count/" + scale_name, window_small_frame_counts)
-            add_col(hdf, '100ms_frame_count/' + scale_name, window_big_frame_counts)
-        
-            
-            print "Collecting", len(jobids), "window results for", scale_name, "..." 
-            progress = progressbar.ProgressBar(len(jobids)).start()
-            for (ncompleted, result) in enumerate(cloud.mp.iresult(jobids)):
-                fName = result['feature_name']
-                rName = result['reducer_name']
-                scale_name = result['scale_name']
-                aggregated = result['aggregated']
-                fr = fName + '/' + rName
-                col_name = fr + '/' + scale_name
-                add_col(hdf, col_name, aggregated)
-                # as an optimization, min and max recycle their previous outputs
-                if rName == 'min' or rName == 'max': minmax_results[fr] = aggregated 
-                progress.update(ncompleted)
-            cloud.mp.delete(jobids)
-            progress.finish()
-            last_time_scale = scale
-            print 
-        gc.enable() 
     
-    def run(self, inputFile, outputFilename, max_books = None):
-        hdf = h5py.File(outputFilename,'w')
-        hdf.attrs['timescales'] =  [pair[0] for pair in self.timescales]
-        hdf.attrs['features'] = self.feature_fns.keys()
-        if self.reducers: hdf.attrs['reducers'] = self.reducers.keys()
-        header, raw_features = features_from_file(inputFile, self.feature_fns, self.feature_uses_prev_orderbook, max_books=max_books, show_progress=True)
-        hdf.attrs['ccy'] = header['ccy']
+    
+    def dict_to_hdf(self, d, path, ccy):
+      hdf = h5py.File(path, 'w')
+      hdf.attrs['features'] = self.feature_fns.keys()
+      hdf.attrs['ccy'] = ccy
+       
+      for name, vec in d.items(): 
+        add_col(hdf, name, vec)
+      
+      # if program quits before this flag is added, ok to overwrite 
+      # file in the future
+      hdf.attrs['finished'] = True 
+      hdf.close()
+      
+            
+    def run(self, input_filename, 
+            output_filename_1ms, 
+            output_filename_100ms,
+            max_books = None):
+        
+        header, raw_features = features_from_file(input_filename,  
+          self.feature_fns, 
+          self.feature_uses_prev_orderbook, 
+          max_books=max_books, 
+          show_progress=True)
+        
         frames_1ms = aggregate_1ms_frames(raw_features, self.frame_reducers_1ms)
         del raw_features 
-        # save 1ms, 100ms and 'agg' as separate HDFs, without
-        # putting scale suffixes on the features 
-        for name, vec in frames_1ms.items(): add_col(hdf, name + "/1ms", vec)
+        self.dict_to_hdf(frames_1ms, output_filename_1ms, header['ccy'])
         
         frames_100ms = self.aggregate_100ms_frames(frames_1ms)
         del frames_1ms 
-        for name, vec in frames_100ms.items(): add_col(hdf, name + "/100ms", vec)
-        if self.reducers: self.aggregate_windows(frames_100ms, hdf)
+        self.dict_to_hdf(frames_100ms, output_filename_100ms, header['ccy'] )
+       
         
-        # if program quits before this flag is added, ok to overwrite 
-        # file in the future 
-        hdf.attrs['finished'] = True 
-        hdf.close()
-    
