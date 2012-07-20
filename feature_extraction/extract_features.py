@@ -7,6 +7,9 @@ import boto
 import fnmatch 
 import time
 import progressbar  
+import cloud
+
+cloud.setkey(2579, 'f228c0325cf687779264a0b0698b0cfe40148d65')
 
 extractor = FeaturePipeline()
 extractor.add_feature('t', features.millisecond_timestamp)
@@ -79,9 +82,7 @@ def file_already_done(filename):
 def open_gzip(filename):
     return gzip.GzipFile(filename, 'r')
 
-
-
-def process_local_file(input_filename, dest_1ms, dest_100ms, max_books = None, profile = False, heap_profile = False):
+def process_local_file(input_filename, dest_1ms, dest_100ms, max_books = None):
     print "Start time:", datetime.datetime.now()
     # delete both files just in case one exists
     try:
@@ -106,25 +107,9 @@ def process_local_file(input_filename, dest_1ms, dest_100ms, max_books = None, p
         extractor.add_feature(
           'last_offer_digit_near_zero', features.fourth_offer_digit_close_to_wrap)
     
-    if profile:
-        import cProfile
-        cProfile.runctx(\
-          "extractor.run(f, dest_filename, max_books = max_books)",
-          globals(), locals(), filename="profile.cprof")
-        import pstats
-        stats = pstats.Stats("profile.cprof")
-        stats.strip_dirs().sort_stats('time').print_stats(20)
-    else:
-        extractor.run(f, dest_1ms, dest_100ms, max_books = max_books)
+    extractor.run(f, dest_1ms, dest_100ms, max_books = max_books)
     f.close()
-    if heap_profile:
-        print "Heap contents:"
-        from guppy import hpy
-        heap = hpy().heap()
-        print heap
-        print heap[0].rp
-        print heap[0].byid
-
+    
 def output_filenames(input_path, feature_dir = None):
   assert not os.path.isdir(input_path)
   base_dir, input_name  = os.path.split(input_path)
@@ -140,7 +125,7 @@ def output_filenames(input_path, feature_dir = None):
   dest_100ms = os.path.join(feature_dir, no_ext + "_100ms.hdf")
   return dest_1ms, dest_100ms
 
-def process_local_dir(input_path, output_dir = None, max_books = None, profile = False, heap_profile = False ):
+def process_local_dir(input_path, output_dir = None, max_books = None):
     if not os.path.exists(input_path):
         print "Specified path does not exist: ", input_path
         exit()
@@ -225,44 +210,32 @@ def process_s3_file(input_bucket_name, input_key_name, output_bucket_name = None
 
 
 def process_s3_files(input_bucket_name, key_glob = '*', 
-      output_bucket_name = None, distributed = None):
+      output_bucket_name = None, use_cloud = True):
   import boto
   s3_cxn = boto.connect_s3()
   if s3_cxn is None:
     raise RuntimeError("Couldn't connect to S3")    
   in_bucket = s3_cxn.get_bucket(input_bucket_name)
 
-  matching_keys = \
-    [k.name for k in in_bucket.get_all_keys() if fnmatch.fnmatch(k.name, key_glob)]
-
-  if distributed is None:
-    try:
-      from IPython.parallel import Client
-      rc = Client(packer='pickle')
-      distributed = True
-    except:
-      distributed = False 
+  matching_keys = []
+  for k in in_bucket:
+    if fnmatch.fnmatch(k.name, key_glob):
+      matching_keys.append(k.name)
      
-  if distributed:
-    from IPython.parallel import Client
-    rc = Client(packer='pickle')
-    rc['process_s3_file'] = process_s3_file
-    rc['extractor'] = extractor
-    view = rc[:]
-    print "Distributing %d keys to %d workers" \
-      % (len(matching_keys), len(rc.ids))
-    # generate keys explicitly since we can't pass a closure to IPython's map_async
-    inputs = [ (input_bucket_name, key, output_bucket_name) for key in matching_keys]
-    view.apply_sync(lambda args: process_s3_file(*args), inputs)
-    #msgset = set(delayed.msg_ids)
-    #pending  = msgset 
-    #progress = progressbar.ProgressBar(len(msgset)).start()
-    #while len(pending) > 0:
-    #  completed = msgset.difference(rc.outstanding)
-    #  pending = msgset.intersection(rc.outstanding)
-    #  progress.update(len(completed))
-    #  if len(pending) > 0:
-    #    time.sleep(1)
+  if use_cloud:
+    
+    print "Distributing %d keys" % len(matching_keys)
+    
+    jids = cloud.map(\
+      lambda k: process_s3_file(input_bucket_name, k, output_bucket_name), 
+      matching_keys, _type = 'm1' )
+    
+    progress = progressbar.ProgressBar(len(jids)).start()
+    n_finished = 0
+    for _ in cloud.iresult(jids):
+      n_finished += 1
+      progress.update(n_finished)
+    print "Done!"  
   else:
     print "Running locally..."
     print "%d keys match the pattern \'%s\'" % (len(matching_keys), key_glob)
@@ -279,14 +252,6 @@ parser.add_option("-d", "--feature_dir",
   type="string",
   help="which directory should we write feature files to")
 
-parser.add_option("-p", "--profile", 
-  dest="profile", action="store_true", default=False, 
-  help="run inside profiler")
-
-parser.add_option("--heap_profile", 
-  dest="heap_profile", action='store_true', default=False, 
-  help="print information about live heap objects")
-
 
 if __name__ == '__main__':
   (options, args) = parser.parse_args()
@@ -296,11 +261,11 @@ if __name__ == '__main__':
     parser.print_help()
   elif args[0].startswith('s3://'):
     bucket, _, pattern = args[0].split('s3://')[1].partition('/')
+    assert bucket and len(bucket) > 0
+    assert pattern and len(pattern) > 0
     print "Bucket = %s, pattern = %s" % (bucket, pattern)
-    process_s3_files(bucket, pattern)
+    process_s3_files(bucket, pattern, True)
   else:
     process_local_dir(args[0],
       options.feature_dir,
-      options.max_books,
-      options.profile,
-      options.heap_profile)
+      options.max_books)
