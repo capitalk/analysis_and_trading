@@ -192,6 +192,7 @@ def process_s3_file(input_bucket_name,
     if s3_cxn is None:
       raise RuntimeError("Couldn't connect to S3")
   in_bucket = s3_cxn.get_bucket(input_bucket_name)
+  assert in_bucket is not None
   in_key = in_bucket.get_key(input_key_name)
   if in_key is None:
     raise RuntimeError(\
@@ -201,6 +202,7 @@ def process_s3_file(input_bucket_name,
   if os.path.exists(input_filename) and \
      os.path.getsize(input_filename) == in_key.size:
     print "Already downloaded", input_filename, "from S3"
+  else:
     in_key.get_contents_to_filename(input_filename)
   dest_1ms, dest_100ms = output_filenames(input_filename, tempdir)
   if file_already_done(dest_1ms) and file_already_done(dest_100ms):
