@@ -251,16 +251,16 @@ def process_s3_files(input_bucket_name, key_glob = '*',
       % (len(matching_keys), len(rc.ids))
     # generate keys explicitly since we can't pass a closure to IPython's map_async
     inputs = [ (input_bucket_name, key, output_bucket_name) for key in matching_keys]
-    delayed = view.map_async(lambda args: process_s3_file(*args), inputs)
-    msgset = set(delayed.msg_ids)
-    pending  = msgset 
-    progress = progressbar.ProgressBar(len(msgset)).start()
-    while len(pending) > 0:
-      completed = msgset.difference(rc.outstanding)
-      pending = msgset.intersection(rc.outstanding)
-      progress.update(len(completed))
-      if len(pending) > 0:
-        time.sleep(1)
+    view.apply_sync(lambda args: process_s3_file(*args), inputs)
+    #msgset = set(delayed.msg_ids)
+    #pending  = msgset 
+    #progress = progressbar.ProgressBar(len(msgset)).start()
+    #while len(pending) > 0:
+    #  completed = msgset.difference(rc.outstanding)
+    #  pending = msgset.intersection(rc.outstanding)
+    #  progress.update(len(completed))
+    #  if len(pending) > 0:
+    #    time.sleep(1)
   else:
     print "Running locally..."
     print "%d keys match the pattern \'%s\'" % (len(matching_keys), key_glob)
