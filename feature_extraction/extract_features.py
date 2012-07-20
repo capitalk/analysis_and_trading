@@ -141,13 +141,13 @@ def output_filenames(input_path, feature_dir = None):
   return dest_1ms, dest_100ms
 
 def process_local_dir(input_path, output_dir = None, max_books = None, profile = False, heap_profile = False ):
-    if not os.path.exists(path):
-        print "Specified path does not exist: ", path
+    if not os.path.exists(input_path):
+        print "Specified path does not exist: ", input_path
         exit()
         
     if os.path.isdir(input_path):
         files = os.listdir(input_path)
-        basedir = path
+        basedir = input_path
     else:
         basedir = os.path.split(input_path)[0]
         files = [os.path.basename(input_path)]
@@ -163,7 +163,7 @@ def process_local_dir(input_path, output_dir = None, max_books = None, profile =
             dest_filename_1ms, dest_filename_100ms = \
               output_filenames (input_filename, output_dir)
             
-            if file_already_done(dest_filename_1ms) and 
+            if file_already_done(dest_filename_1ms) and \
                file_already_done(dest_filename_100ms):
                 print "Skipping %s found data files %s" \
                   % (input_filename, [dest_filename_1ms, dest_filename_100ms])
@@ -198,7 +198,7 @@ def process_s3_file(input_bucket_name,
       "Key Not Found: bucket = " + input_bucket_name  \
       + ", input_key = " + input_key_name)
   print "Downloading", input_key_name, "to", input_filename, "..."
-  is os.path.exists(input_filename) and 
+  if os.path.exists(input_filename) and \
      os.path.getsize(input_filename) == in_key.size:
     print "Already downloaded", input_filename, "from S3"
     in_key.get_contents_to_filename(input_filename)
@@ -231,14 +231,14 @@ def process_s3_files(input_bucket_name, key_glob = '*',
       raise RuntimeError("Couldn't connect to S3")    
   in_bucket = s3_cxn.get_bucket(input_bucket_name)
   matching_keys = \
-    [fnmatch.fnmatchcase(name, key_glob) for name in in_bucket.get_all_keys()]
+    [fnmatch.fnmatchcase(k.name, key_glob) for k in in_bucket.get_all_keys()]
 
   if distributed:
     from IPython.parallel import Client
     rc = Client(packer='pickle')
     view = rc[:]
     print "Distributing %d keys to %d workers" \
-      % (len(matching_keys, len(rc.ids))
+      % (len(matching_keys), len(rc.ids))
     # generate keys explicitly since we can't pass a closure to IPython's map_async
     inputs = [ (input_bucket_name, key, output_bucket_name) for key in matching_keys]
     delayed = view.map_async(lambda args: process_s3_file(*args), inputs)
@@ -248,7 +248,7 @@ def process_s3_files(input_bucket_name, key_glob = '*',
     while len(pending) > 0:
       completed = msgset.difference(rc.outstanding)
       pending = msgset.intersection(rc.outstanding)
-      progressbar.update(len(completed))
+      progress.update(len(completed))
       if len(pending) > 0:
         time.sleep(1)
   else:
