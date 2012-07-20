@@ -231,7 +231,7 @@ def process_s3_files(input_bucket_name, key_glob = '*',
       raise RuntimeError("Couldn't connect to S3")    
   in_bucket = s3_cxn.get_bucket(input_bucket_name)
   matching_keys = \
-    [fnmatch.fnmatchcase(k.name, key_glob) for k in in_bucket.get_all_keys()]
+    [k.name for k in in_bucket.get_all_keys() if fnmatch.fnmatch(k.name, key_glob)]
 
   if distributed:
     from IPython.parallel import Client
