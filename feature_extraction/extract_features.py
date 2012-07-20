@@ -175,8 +175,7 @@ def process_local_dir(input_path, output_dir = None, max_books = None, profile =
           print "Unknown suffix for", filename  
 
 
-def process_s3_file(input_bucket_name, 
-     input_key_name, output_bucket_name = None, s3_cxn = None):
+def process_s3_file(input_bucket_name, input_key_name, output_bucket_name = None):
   if os.access('/scratch/sgeadmin', os.F_OK | os.R_OK | os.W_OK):
     print 'Using /scratch/sgeadmin for local storage'
     tempdir = '/scratch/sgeadmin'
@@ -187,10 +186,10 @@ def process_s3_file(input_bucket_name,
     print 'Using ./ for local storage'
     tempdir = './'
   input_filename = os.path.join(tempdir, input_key_name)
+  import boto 
+  s3_cxn = boto.connect_s3()
   if s3_cxn is None:
-    s3_cxn = boto.connect_s3()
-    if s3_cxn is None:
-      raise RuntimeError("Couldn't connect to S3")
+    raise RuntimeError("Couldn't connect to S3")
   in_bucket = s3_cxn.get_bucket(input_bucket_name)
   assert in_bucket is not None
   in_key = in_bucket.get_key(input_key_name)
@@ -226,12 +225,13 @@ def process_s3_file(input_bucket_name,
 
 
 def process_s3_files(input_bucket_name, key_glob = '*', 
-      output_bucket_name = None, s3_cxn = None, distributed = None):
+      output_bucket_name = None, distributed = None):
+  import boto
+  s3_cxn = boto.connect_s3()
   if s3_cxn is None:
-    s3_cxn = boto.connect_s3()
-    if s3_cxn is None:
-      raise RuntimeError("Couldn't connect to S3")    
+    raise RuntimeError("Couldn't connect to S3")    
   in_bucket = s3_cxn.get_bucket(input_bucket_name)
+
   matching_keys = \
     [k.name for k in in_bucket.get_all_keys() if fnmatch.fnmatch(k.name, key_glob)]
 
@@ -246,6 +246,8 @@ def process_s3_files(input_bucket_name, key_glob = '*',
   if distributed:
     from IPython.parallel import Client
     rc = Client(packer='pickle')
+    rc['process_s3_file'] = process_s3_file
+    rc['extractor'] = extractor
     view = rc[:]
     print "Distributing %d keys to %d workers" \
       % (len(matching_keys), len(rc.ids))
