@@ -232,7 +232,7 @@ class FeaturePipeline:
             
     def run(self, input_filename, 
             output_filename_1ms, 
-            output_filename_100ms,
+            output_filename_100ms, 
             max_books = None):
         
         header, raw_features = features_from_file(input_filename,  
@@ -243,10 +243,12 @@ class FeaturePipeline:
         
         frames_1ms = aggregate_1ms_frames(raw_features, self.frame_reducers_1ms)
         del raw_features 
-        self.dict_to_hdf(frames_1ms, output_filename_1ms, header['ccy'])
-        
-        frames_100ms = self.aggregate_100ms_frames(frames_1ms)
-        del frames_1ms 
-        self.dict_to_hdf(frames_100ms, output_filename_100ms, header['ccy'] )
+        if output_filename_1ms:
+          self.dict_to_hdf(frames_1ms, output_filename_1ms, header['ccy'])
+          
+        if output_filename_100ms:
+          frames_100ms = self.aggregate_100ms_frames(frames_1ms)
+          self.dict_to_hdf(frames_100ms, output_filename_100ms, header['ccy'] )
+       
        
         

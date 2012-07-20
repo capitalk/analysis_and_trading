@@ -284,6 +284,7 @@ if __name__ == '__main__':
     parser.print_help()
   elif args[0].startswith('s3://'):
     bucket, _, pattern = args[0].split('s3://')[1].partition('/')
+    print "Bucket = %s, pattern = %s" % (bucket, pattern)
     process_s3_files(bucket, pattern, distributed = False)
   else:
     process_local_dir(args[0],
