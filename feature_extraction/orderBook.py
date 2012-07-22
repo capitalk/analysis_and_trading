@@ -1,4 +1,9 @@
-    
+
+from collections import namedtuple 
+  
+OFFER_SIDE = True
+BID_SIDE = False
+  
 class Order:
     def __init__(self, 
             timestamp=None,
@@ -21,27 +26,62 @@ class Order:
         print self.__str__()
 
 
-OFFER_SIDE = 1 
-BID_SIDE = 0
-
 ADD_ACTION_TYPE = 'A'
 DELETE_ACTION_TYPE = 'D' 
 MODIFY_ACTION_TYPE = 'M'
 
-class Action:
-    def __init__(self, action_type = None, side = None, price = None, volume = None):
-        self.action_type = action_type 
-        self.side = side
-        self.price = price
-        self.volume = volume
+# actions are now just tuples, so use these positions instead of fields
+Action = namedtuple('Action', ('action_type', 'side', 'price', 'size'))
 
 class OB:
-    def __init__(self, lastUpdateTime, lastUpdateMonotonic = None, actions = []):
+    __slots__ = \
+      ['bids', 'offers', 'day', 'lastUpdateTime', 'lastUpdateMonotonic', 
+       'actions', 
+       
+       'bid_tr8dr', 'offer_tr8dr', 
+       
+       'filled_bid_volume', 'filled_bid_count', 
+       'filled_offer_volume', 'filled_offer_count',
+       'deleted_bid_volume', 'deleted_bid_count',
+       'deleted_offer_volume', 'deleted_offer_count',
+       'canceled_bid_volume', 'canceled_bid_count',
+       'canceled_offer_volume', 'canceled_offer_count',
+       'added_bid_volume', 'added_bid_count',  
+       'added_offer_volume', 'added_offer_count',
+       'added_best_bid_volume', 'added_best_bid_count', 
+       'added_best_offer_volume', 'added_best_offer_count']
+    
+    """day = days since unix start time"""
+    def __init__(self, day, lastUpdateTime, lastUpdateMonotonic = None, actions = []):
         self.bids = [] 
         self.offers = [] 
+        self.day = day
         self.lastUpdateTime = lastUpdateTime
         self.lastUpdateMonotonic = lastUpdateMonotonic
         self.actions = actions 
+        
+        self.bid_tr8dr = 0 
+        self.offer_tr8dr = 0
+
+        self.filled_bid_volume = 0
+        self.filled_bid_count = 0 
+        self.filled_offer_volume = 0
+        self.filled_offer_count = 0
+
+        self.canceled_bid_volume = 0 
+        self.canceled_bid_count = 0
+        self.canceled_offer_volume = 0
+        self.canceled_offer_count = 0
+
+        self.added_offer_volume = 0
+        self.added_offer_count = 0
+        self.added_bid_volume = 0
+        self.added_bid_count = 0
+
+        self.added_best_offer_volume = 0 
+        self.added_best_offer_count = 0
+        self.added_best_bid_volume = 0
+        self.added_best_bid_count = 0
     
     def add_order(self, order):
         if order.side == OFFER_SIDE: 
@@ -68,6 +108,7 @@ class OB:
             return self.offers[0] 
         else:
             return None
+            
     def __str__(self): 
       s = ""    
       for order in reversed(self.offers):
@@ -82,46 +123,14 @@ class OB:
         print self.__str__()
         
     def compute_order_flow_stats(self): 
-      #self.added_volume = sum([a.volume for a in self.actions if a.action_type == ADD_ACTION_TYPE])
-      #self.deleted_volume = sum([a.volume for a in self.actions if a.action_type == DELETE_ACTION_TYPE])
-      #change_at_price = {}
-      #      for a in self.actions: 
-      #          sign = 1 if a.action_type == ADD_ACTION_TYPE else (-1)
-      #          newval = change_at_price.get(a.price, 0) + sign * a.volume 
-      #          change_at_price[a.price] = newval 
-      #      self.change_at_price = change_at_price
-      self.bid_tr8dr = 0 
-      self.offer_tr8dr = 0
-
-      self.filled_bid_volume = 0
-      self.filled_bid_count = 0 
-      self.filled_offer_volume = 0
-      self.filled_offer_count = 0
-
-      self.canceled_bid_volume = 0 
-      self.canceled_bid_count = 0
-      self.canceled_offer_volume = 0
-      self.canceled_offer_count = 0
-
-      self.added_offer_volume = 0
-      self.added_offer_count = 0
-      self.added_bid_volume = 0
-      self.added_bid_count = 0
-            
-      self.added_best_offer_volume = 0 
-      self.added_best_offer_count = 0
-      self.added_best_bid_volume = 0
-      self.added_best_bid_count = 0
-
       best_offer_price = self.offers[0].price
       best_bid_price = self.bids[0].price
  
       for a in self.actions: 
-        p = a.price
-        v = a.volume
-        if a.action_type == ADD_ACTION_TYPE:
+        action_type, side, p, v  = a
+        if action_type == ADD_ACTION_TYPE:
           self.offer_tr8dr += (p - best_offer_price) / best_offer_price 
-          if a.side == OFFER_SIDE:
+          if side == OFFER_SIDE:
             self.added_offer_volume += v
             self.added_offer_count += 1
             if p <= best_offer_price:
@@ -139,8 +148,8 @@ class OB:
               self.added_best_bid_count += 1
             #base_price = best_bid_price
             #cumulative_volume = sum([order.size for order in self.bids if order.price >= p])
-        elif a.action_type == DELETE_ACTION_TYPE:
-          if a.side == OFFER_SIDE:
+        elif action_type == DELETE_ACTION_TYPE:
+          if side == OFFER_SIDE:
             self.offer_tr8dr -= (p - best_offer_price) / best_offer_price 
             if p <= best_offer_price: 
               self.filled_offer_volume += v 

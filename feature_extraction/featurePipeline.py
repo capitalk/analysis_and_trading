@@ -9,6 +9,51 @@ import buildBook
 import aggregators
 
 
+# given a series of unevenly spaced 1ms, average every 100ms by giving
+# higher weights to values which survive longer 
+def time_weighted_average_100ms(feature_1ms, start_indices, end_indices, milliseconds, frame_times, empty_frames):
+    n = len(frame_times)
+    
+    feature_100ms = np.zeros(n)
+    
+    diff = end_indices - start_indices 
+    
+    for (i, end_t) in enumerate(frame_times): 
+        # empty frames get same value as previous frame 
+        if empty_frames[i]:
+            feature_100ms[i] = feature_100ms[i-1]
+        else:
+            start_idx = start_indices[i] 
+            start_t = end_t - 100 
+            end_idx = end_indices[i] 
+                
+            time_slice = milliseconds[start_idx:end_idx]
+            time_slice_from_zero = time_slice - start_t 
+          
+            if (time_slice_from_zero[0] == 1) or (i == 0):
+                # weights are time between frame arrivals
+                weights = np.diff(np.concatenate( [time_slice_from_zero, [101]] )) 
+                slice_1ms = feature_1ms[start_idx:end_idx]    
+            else:
+                # if there's no frame on the first 1ms, then we need to 
+                # reach back to the last 1ms in the previous 100ms 
+                weights = np.diff(np.concatenate( [[1], time_slice_from_zero, [101]] ))
+                slice_1ms = feature_1ms[start_idx-1:end_idx] 
+            feature_100ms[i] = np.dot(weights, slice_1ms) / np.sum(weights)
+    return feature_100ms 
+
+def sum_100ms(feature_1ms, start_indices, end_indices):
+    n = len(start_indices)
+    feature_100ms = np.zeros(n, dtype='float')
+    diffs = end_indices - start_indices 
+    for (i, diff) in enumerate(diffs): 
+        if diff > 1:
+          ticks = feature_1ms[start_indices[i] :end_indices[i]]
+          feature_100ms[i] = np.sum(ticks)
+        elif diff == 1:
+          feature_100ms[i] = feature_1ms[start_indices[i]]
+    return feature_100ms
+
 # grouping sparse messages into frames whose time range is determined
 # by the variable scale (defaults to 1ms)
 # NOTE: ASSUMING THE SECOND ARGUMENT ONLY CONTAINS VALUES FOUND IN THE FIRST
@@ -32,8 +77,13 @@ def features_from_books(books, feature_fns, feature_uses_prev_orderbook, show_pr
     result = {}
     if output: print "Extracting features...."
     
+    # these should all be from the same day, so discard any with days
+    # other than a book in the middle 
+    valid_day = books[len(books)/2].day
+    
     # scan for orderbook with non-empty bids and offers
-    validBooks = [ book for book in books if book.bids and book.offers]
+    validBooks = [ book for book in books if \
+      book.bids and book.offers and book.day == valid_day]
     # generator expression to count all invalid books 
     
     
@@ -43,8 +93,8 @@ def features_from_books(books, feature_fns, feature_uses_prev_orderbook, show_pr
 
     prevBook = validBooks[0]
     validBooks = validBooks[1:]
-    n = len(validBooks)
     
+    n = len(validBooks)
     nfeatures = len(feature_fns)
     
     if show_progress: progress = progressbar.ProgressBar(nfeatures).start()
@@ -74,10 +124,17 @@ def features_from_books(books, feature_fns, feature_uses_prev_orderbook, show_pr
     return result   
 
         
-def features_from_file(f, feature_fns, feature_uses_prev_orderbook, debug=False, max_books=None, show_progress=False, output=True):
-    header, books = buildBook.read_books_from_file(f, debug, end=max_books)
+def features_from_filename(
+  filename, 
+  feature_fns, 
+  feature_uses_prev_orderbook, 
+  debug=False, max_books=None, show_progress=False, output=True):
+  
+    header, books = buildBook.read_books_from_filename(filename, debug, end=max_books)
     if max_books: books = books[:max_books]
-    features = features_from_books(books, feature_fns, feature_uses_prev_orderbook, show_progress=show_progress, output=output)
+    features = \
+      features_from_books(books, feature_fns, feature_uses_prev_orderbook, 
+        show_progress=show_progress, output=output)
     return header, features 
 
 def aggregate_1ms_frames(features, frame_reducers, output=True): 
@@ -87,31 +144,38 @@ def aggregate_1ms_frames(features, frame_reducers, output=True):
     
     unique_times.sort()
     num_unique_times = len(unique_times)
-    if output: print "Found",  len(times), "timestamps, of which", num_unique_times, "are unique"
+    if output:
+      print "Found",  len(times), "timestamps, of which", num_unique_times, "are unique"
     
-    if output: print "Computing 1ms frame indices..." 
+    if output: 
+      print "Computing 1ms frame indices..." 
+    
+    
     window_starts, window_ends = make_frame_indices(times, unique_times)
     t_diff = np.concatenate([[0], np.diff(unique_times)])
     frames_1ms = {'t': unique_times,  'time_since_last_message': t_diff}
     
-    if output: print "Aggregating 1ms frames..." 
+    if output: 
+      print "Aggregating 1ms frames..." 
+    
     nreducers = len(frame_reducers)
     if output: progress = progressbar.ProgressBar(nreducers).start()
     counter = 0 
-    gc.disable()
     for name, fn in frame_reducers.items():
         if name != 't':
             raw = features[name] 
             result = np.zeros(num_unique_times)
             for i in xrange(num_unique_times):
                 start_idx = window_starts[i] 
-                end_idx = window_ends[i] 
-                curr_slice = raw[start_idx:end_idx] 
-                result[i] = fn(curr_slice)
+                end_idx = window_ends[i]
+                if end_idx > start_idx + 1: 
+                  curr_slice = raw[start_idx:end_idx] 
+                  result[i] = fn(curr_slice)
+                else:
+                  result[i] = raw[start_idx]
             frames_1ms[name] = result
         counter += 1
         if output: progress.update(counter)
-    gc.enable()
     if output: progress.finish() 
     if output: print 
     return frames_1ms 
@@ -122,7 +186,6 @@ def aggregate_1ms_frames(features, frame_reducers, output=True):
 compression = 'lzf' 
 
 def add_col(hdf, name, data):
-    #print "Adding column", name, " shape = ", data.shape
   parts = name.split('/')
   dirpath = '/'.join(parts[:-1])
   if len(dirpath) > 0 and dirpath not in hdf:
@@ -165,24 +228,27 @@ class FeaturePipeline:
         round_start = int(math.ceil(start_millisecond / 100.0) * 100)
         round_end = int(math.ceil(end_millisecond / 100.0) * 100)
         
-        if output: print "Generating 100ms frame indices..." 
+        if output: 
+          print "Generating 100ms frame indices..." 
         frame_times = np.arange(round_start, round_end+1, 100)    
         n = len(frame_times)
         start_indices = np.zeros(n)
         end_indices = np.zeros(n)
         empty_frames = np.zeros(n, dtype='bool')
-        for (i, end_t) in enumerate(frame_times):
-            start_t = end_t - 100 
+        for (i, frame_end_t) in enumerate(frame_times):
+            frame_start_t = frame_end_t - 100 
             # start_indices exclude time (t - 100)
-            start_idx = bisect.bisect_right(milliseconds, start_t)
-            if milliseconds[start_idx] > end_t:
+            start_idx = bisect.bisect_right(milliseconds, frame_start_t)
+            if milliseconds[start_idx] > frame_end_t:
                 empty_frames[i] = True 
+                end_idx = start_idx 
+            else:
+                end_idx = bisect.bisect_right(milliseconds, frame_end_t, start_idx) 
+              
             # start indices exclude time (t - 100)
             start_indices[i] = start_idx
             # end indices include time t
-            end_idx = bisect.bisect_right(milliseconds, end_t, start_idx) 
             end_indices[i] = end_idx
-        
         
         features_100ms = {'t': frame_times, 'null_100ms_frame': empty_frames}
         
@@ -193,9 +259,10 @@ class FeaturePipeline:
             # time, and counts get compute separately from normal features 
             if fName != 't' and fName != 'time_since_last_message': 
                 if self.sum_100ms_feature[fName]:
-                    features_100ms[fName] = aggregators.sum_100ms(vec_1ms, start_indices, end_indices, frame_times)
+                    features_100ms[fName] = sum_100ms(vec_1ms, start_indices, end_indices)
                 else:
-                    features_100ms[fName] = aggregators.time_weighted_average_100ms(vec_1ms, start_indices, end_indices, milliseconds, frame_times, empty_frames)
+                    features_100ms[fName] = \
+                      time_weighted_average_100ms(vec_1ms, start_indices, end_indices, milliseconds, frame_times, empty_frames)
         
         print "Computing time between messages and 1ms frame counts..."         
         # compute the time since the last message for all frames, even null ones 
@@ -216,10 +283,19 @@ class FeaturePipeline:
         return features_100ms        
     
     
-    def dict_to_hdf(self, d, path, ccy):
+    def dict_to_hdf(self, d, path, header):
       hdf = h5py.File(path, 'w')
       hdf.attrs['features'] = self.feature_fns.keys()
-      hdf.attrs['ccy'] = ccy
+      ccy1 =  header['ccy'][0]
+      ccy2 =  header['ccy'][1]
+      
+      hdf.attrs['ccy1'] = ccy1.encode('ascii')
+      hdf.attrs['ccy2'] = ccy2.encode('ascii')
+      hdf.attrs['ccy'] = (ccy1 + "/" + ccy2).encode('ascii')
+      hdf.attrs['year'] = header['year']
+      hdf.attrs['month'] = header['month']
+      hdf.attrs['day'] = header['day']
+      hdf.attrs['venue'] = header['venue'].encode('ascii')
        
       for name, vec in d.items(): 
         add_col(hdf, name, vec)
@@ -235,20 +311,24 @@ class FeaturePipeline:
             output_filename_100ms, 
             max_books = None):
         
-        header, raw_features = features_from_file(input_filename,  
+        header, raw_features = features_from_filename(input_filename,  
           self.feature_fns, 
           self.feature_uses_prev_orderbook, 
           max_books=max_books, 
           show_progress=True)
+          
+        assert 'ccy' in header and len(header['ccy']) == 2
         
         frames_1ms = aggregate_1ms_frames(raw_features, self.frame_reducers_1ms)
         del raw_features 
         if output_filename_1ms:
-          self.dict_to_hdf(frames_1ms, output_filename_1ms, header['ccy'])
+          self.dict_to_hdf(frames_1ms, output_filename_1ms, header)
           
         if output_filename_100ms:
           frames_100ms = self.aggregate_100ms_frames(frames_1ms)
-          self.dict_to_hdf(frames_100ms, output_filename_100ms, header['ccy'] )
+          self.dict_to_hdf(frames_100ms, output_filename_100ms, header )
+        
+        return header 
        
        
         

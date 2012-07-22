@@ -10,7 +10,6 @@ def locked(ob):
 def crossed(ob):
   return ob.offers[0].price < ob.bids[0].price
 
-
 ## difference between the best level and 5 levels away
 
 def bid_range(orderBook):
@@ -165,23 +164,6 @@ def second_timestamp(orderBook):
 
 def message_count(orderBook):
     return len(orderBook.actions)
-
-#def timestamp(orderBook):
-    #return orderBook.lastUpdateTime
-    
-#def second_timestamp(orderBook):
-    #t = orderBook.lastUpdateTime.time()
-    #return int(t.hour * 3600 + t.minute * 60 + t.second)
-
-#def millisecond_timestamp(orderBook):
-    #t = orderBook.lastUpdateTime.time()
-    #return int(t.hour * 3600000 + t.minute * 60000 + t.second * 1000 + int(t.microsecond / 1000.0) )
-
-##def millisecond_timestamp_mod1000(orderBook):
-    
-#def microsecond_timestamp(orderBook): 
-    #t = orderBook.lastUpdateTime.time()
-    #return second_timestamp(orderBook)*1000000 + t.microsecond
 
 # cache results 
 def bid_volume(orderBook): 
