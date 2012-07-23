@@ -234,13 +234,12 @@ class V3_Parser:
         volume = int(float(volume))
         self.actions.append( (action_type, side, price, volume) )
             
-    def start_new_orderbook(self, line):
-         
+    def start_new_orderbook(self, line):         
         self.at_start_of_file = False 
         # periodically clear the order cache so it doesn't eat all the memory 
-        if len(self.order_cache) > 20000:
-            self.order_cache = {} 
-        
+        if len(self.order_cache) > 5000:
+            self.order_cache.clear() 
+
         if self.currBook:
             self.books.append(self.currBook)
         _, _, monotonic_time, exchange_time = line.split(',')
@@ -266,7 +265,9 @@ class V3_Parser:
         pass
 
  
-    def parse(self, f, debug=False, end=None, drop_out_of_order=False): 
+    def parse(self, f, debug=False, end=None, drop_out_of_order=False, start_from_line = None):
+      
+         
         dispatch_table = {
             'V': self.parse_header, 
             'A': self.parse_add_action, 
@@ -276,13 +277,12 @@ class V3_Parser:
             '#': self.ignore, 
             '\n': self.ignore, 
         }
-        try:  
-          for line in f:
-              start_char = line[0]
+        for line in f:
+          try:
               # this loop used to only dispatch on the first char
               # but I inlined the most common function 'build_orderbook_entry'
               # for slight performance boost 
-              if start_char == 'Q':  
+              if line[0] == 'Q':  
                   if line in self.order_cache: 
                       order = self.order_cache[line]
                   else:
@@ -298,45 +298,49 @@ class V3_Parser:
                       self.order_cache[line] = order
                   self.currBook.add_order(order)
               else:
-                dispatch_table[line[0]](line)      
-        except Exception as inst:          
-          # sometimes the collector doesn't finish printing 
-          # the last orderbook 
-          # so skip exceptions at the end of a file 
-          if f.read(100) == '' and len(self.books) > 0:
-              print "At last line of data file, ignoring error..." 
-          elif "RESTART" in line:
-              print "Found restart without preceding newline"
-              print line
-              # had to inline restarts since, if they happen at the 
-              # beginning of the file, they force us to wind forward to
-              # the first orderbook 
-              if self.done_with_header:
-                print line
-              else:
-                assert self.currBook == None 
-                assert len(self.books) == 0 
-                assert self.actions == [] 
-                assert len(self.header) == 0
-                # if we haven't parsed a header yet then skip to first
-                # orderbook we can find 
-                line = next(f)
-                while not line.startswith('OB'):
+                dispatch_table[line[0]](line) 
+           
+          except Exception as inst:     
+            # sometimes the collector doesn't finish printing 
+            # the last orderbook 
+            # so skip exceptions at the end of a file 
+            curr_pos = f.tell()
+            peek_str = f.read(100)
+            f.seek(curr_pos)
+            if peek_str == '' and len(self.books) > 0:
+                print "At last line of data file, ignoring error..." 
+                break
+            elif "RESTART" in line:
+                print "Found restart without preceding newline"
+                print ">> ", line
+                # had to inline restarts since, if they happen at the 
+                # beginning of the file, they force us to wind forward to
+                # the first orderbook 
+                if self.done_with_header:
+                  continue
+                else:
+                  assert self.currBook == None
+                  assert len(self.books) == 0 
+                  assert len(self.header) == 0
+                  # if we haven't parsed a header yet then skip to first
+                  # orderbook we can find 
                   line = next(f)
-                fields = line.split(',')
-                assert len(fields) >= 2
-                ccy_str = fields[1]
-                self.header['ccy'] = parse_ccy(ccy_str)
-                # call the normal routine to start an orderbook
-                self.start_new_orderbook(line)
-                self.parse(f, debug, end, drop_out_of_order)
-          
-          else: 
-              print "Encountered error at line:", line
-              print type(inst)     # the exception instance
-              print inst           # __str__ allows args to printed directly
-              print "Unrecoverable!"
-              raise
+                  while not line.startswith('OB'):
+                    line = next(f)
+                  fields = line.split(',')
+                  assert len(fields) >= 2
+                  ccy_str = fields[1]
+                  self.header['ccy'] = parse_ccy(ccy_str)
+                  # call the normal routine to start an orderbook
+                  self.start_new_orderbook(line)
+                  self.done_with_header = True
+                  continue
+            else: 
+                print "Encountered error at line:", line
+                print type(inst)     # the exception instance
+                print inst           # __str__ allows args to printed directly
+                print "Unrecoverable!"
+                raise
                 
         return self.header, self.books 
 

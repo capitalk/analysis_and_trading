@@ -116,16 +116,9 @@ def process_local_file(input_filename, dest_1ms, dest_100ms, max_books = None, h
     #      'last_offer_digit_near_zero', features.fourth_offer_digit_close_to_wrap)
     
     header = \
-      extractor.run(input_filename, dest_1ms, dest_100ms, max_books = max_books)
+      extractor.run(input_filename, dest_1ms, dest_100ms, max_books = max_books, 
+        heap_profile = heap_profile)
 
-    if heap_profile:
-        print "Heap contents:"
-        from guppy import hpy
-        heap = hpy().heap()
-        print heap
-        print heap[0].rp
-        print heap[0].byid
-        
     return header 
     
     
@@ -374,10 +367,10 @@ if __name__ == '__main__':
     assert bucket and len(bucket) > 0
     assert pattern and len(pattern) > 0
     print "Bucket = %s, pattern = %s" % (bucket, pattern)
-    process_s3_files(bucket, pattern, options.overwrite)
+    process_s3_files(bucket, pattern, overwrite = options.overwrite, use_cloud=True)
   else:
     process_local_dir(args[0],
       options.feature_dir,
       options.max_books, 
       options.heap_profile, 
-      options.overwrite)
+      overwrite = options.overwrite)

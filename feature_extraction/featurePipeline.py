@@ -7,7 +7,15 @@ import progressbar
 import buildBook 
 import aggregators
 
-import sys 
+
+def show_heap_info():
+  from guppy import hpy
+  heap = hpy().heap()
+  print heap
+  print heap[0].rp
+  print heap[0].byid
+
+
 # given a series of unevenly spaced 1ms, average every 100ms by giving
 # higher weights to values which survive longer 
 def time_weighted_average_100ms(feature_1ms, start_indices, end_indices, milliseconds, frame_times):
@@ -86,7 +94,6 @@ def sum_100ms(feature_1ms, start_indices, end_indices):
 # given a list of books, return a dictionary of feature vectors 
 def features_from_books(books, feature_fns, feature_uses_prev_orderbook, show_progress=False, output=True):
     result = {}
-    if output: print "Extracting features...."
     
     # these should all be from the same day, so discard any with days
     # other than a book in the middle 
@@ -99,14 +106,21 @@ def features_from_books(books, feature_fns, feature_uses_prev_orderbook, show_pr
     
     
     numInvalid = len(books) - len(validBooks)
-    if numInvalid > 0 and output:
-        print "Dropping", numInvalid, "invalid order books"
-
+    
+    if output:
+      print "Keeping %d of %d order books (%d dropped)" % \
+        (len(validBooks), len(books), numInvalid)
+      
     prevBook = validBooks[0]
     validBooks = validBooks[1:]
     
+    
     n = len(validBooks)
     nfeatures = len(feature_fns)
+    
+    if output: 
+      print "Extracting %d features...." % nfeatures
+
     
     if show_progress: progress = progressbar.ProgressBar(nfeatures).start()
     for (featurenum, (name, fn)) in enumerate(feature_fns.items()): 
@@ -117,12 +131,12 @@ def features_from_books(books, feature_fns, feature_uses_prev_orderbook, show_pr
             else: timeseries = np.zeros(n, dtype='int')
             if feature_uses_prev_orderbook[name]:
                 for (i,book) in enumerate(validBooks):
-                    book.compute_order_flow_stats()
+                    book.compute_stats()
                     timeseries[i] = fn(prevBook, book)
                     prevBook = book 
             else:
                 for (i, book) in enumerate(validBooks):
-                    book.compute_order_flow_stats()
+                    book.compute_stats()
                     timeseries[i] = fn(book)
             result[name] = timeseries
         if show_progress: progress.update(featurenum)
@@ -139,13 +153,26 @@ def features_from_filename(
   filename, 
   feature_fns, 
   feature_uses_prev_orderbook, 
-  debug=False, max_books=None, show_progress=False, output=True):
-  
+  debug=False, 
+  max_books=None, 
+  show_progress=False, 
+  output=True, 
+  heap_profile = False):
+    if heap_profile: 
+      print "=== Heap before parsing orderbooks ==="
+      show_heap_info()
     header, books = buildBook.read_books_from_filename(filename, debug, end=max_books)
+    if heap_profile: 
+      print "=== Heap after parsing orderbooks ==="
+      show_heap_info()
     if max_books: books = books[:max_books]
     features = \
       features_from_books(books, feature_fns, feature_uses_prev_orderbook, 
         show_progress=show_progress, output=output)
+    if heap_profile: 
+      print "=== Heap after extracting features ==="
+      show_heap_info()
+      
     return header, features 
 
 
@@ -361,13 +388,14 @@ class FeaturePipeline:
     def run(self, input_filename, 
             output_filename_1ms, 
             output_filename_100ms, 
-            max_books = None):
+            max_books = None, heap_profile = False):
         
         header, raw_features = features_from_filename(input_filename,  
           self.feature_fns, 
           self.feature_uses_prev_orderbook, 
           max_books=max_books, 
-          show_progress=True)
+          show_progress=True, 
+          heap_profile = heap_profile)
           
         assert 'ccy' in header and len(header['ccy']) == 2
         

@@ -33,24 +33,32 @@ MODIFY_ACTION_TYPE = 'M'
 # actions are now just tuples, so use these positions instead of fields
 Action = namedtuple('Action', ('action_type', 'side', 'price', 'size'))
 
+ob_stat_names = (
+ 'bid_tr8dr', 'offer_tr8dr', 
+ 'filled_bid_volume', 'filled_bid_count', 
+ 'filled_offer_volume', 'filled_offer_count',
+ 'canceled_bid_volume', 'canceled_bid_count',
+ 'canceled_offer_volume', 'canceled_offer_count',
+ 'added_bid_volume', 'added_bid_count',  
+ 'added_offer_volume', 'added_offer_count',
+ 'added_best_bid_volume', 'added_best_bid_count', 
+ 'added_best_offer_volume', 'added_best_offer_count', 
+ 'total_bid_volume', 'total_offer_volume' )
+ 
+ # these are redundant since deleted = filled + canceled
+ #'deleted_bid_volume', 'deleted_bid_count',
+ #'deleted_offer_volume', 'deleted_offer_count',
+
+
+ob_stat_init_zeros = [0] * len(ob_stat_names)
+
+OrderBookStats = namedtuple('OrderBookStats', ob_stat_names)
+
 class OB:
-    __slots__ = \
-      ['bids', 'offers', 'day', 'lastUpdateTime', 'lastUpdateMonotonic', 
-       'actions', 
-       
-       'bid_tr8dr', 'offer_tr8dr', 
-       
-       'filled_bid_volume', 'filled_bid_count', 
-       'filled_offer_volume', 'filled_offer_count',
-       'deleted_bid_volume', 'deleted_bid_count',
-       'deleted_offer_volume', 'deleted_offer_count',
-       'canceled_bid_volume', 'canceled_bid_count',
-       'canceled_offer_volume', 'canceled_offer_count',
-       'added_bid_volume', 'added_bid_count',  
-       'added_offer_volume', 'added_offer_count',
-       'added_best_bid_volume', 'added_best_bid_count', 
-       'added_best_offer_volume', 'added_best_offer_count']
-    
+    __slots__ = [
+      'bids', 'offers', 'day', 'lastUpdateTime', 
+      'lastUpdateMonotonic', 'actions', 'stats']
+      
     """day = days since unix start time"""
     def __init__(self, day, lastUpdateTime, lastUpdateMonotonic = None, actions = []):
         self.bids = [] 
@@ -59,55 +67,20 @@ class OB:
         self.lastUpdateTime = lastUpdateTime
         self.lastUpdateMonotonic = lastUpdateMonotonic
         self.actions = actions 
+        self.stats = OrderBookStats(*ob_stat_init_zeros)
         
-        self.bid_tr8dr = 0 
-        self.offer_tr8dr = 0
-
-        self.filled_bid_volume = 0
-        self.filled_bid_count = 0 
-        self.filled_offer_volume = 0
-        self.filled_offer_count = 0
-
-        self.canceled_bid_volume = 0 
-        self.canceled_bid_count = 0
-        self.canceled_offer_volume = 0
-        self.canceled_offer_count = 0
-
-        self.added_offer_volume = 0
-        self.added_offer_count = 0
-        self.added_bid_volume = 0
-        self.added_bid_count = 0
-
-        self.added_best_offer_volume = 0 
-        self.added_best_offer_count = 0
-        self.added_best_bid_volume = 0
-        self.added_best_bid_count = 0
-    
     def add_order(self, order):
-        if order.side == OFFER_SIDE: 
-            self.offers.append(order)
-        else:
-            self.bids.append(order) 
+      if order.side == OFFER_SIDE: 
+        self.offers.append(order)
+      else:
+        self.bids.append(order) 
         
     def add_bid(self, order):
-        #assert len(self.bids) == 0 or entry.price < self.bids[-1].price
-        self.bids.append(order)
+      self.bids.append(order)
 
     def add_offer(self, order):
-        #assert len(self.offers) == 0 or entry.price > self.offers[-1].price
-        self.offers.append(order) 
+      self.offers.append(order) 
     
-    def best_bid(self): 
-        if len(self.bids) > 0:
-            return self.bids[0] 
-        else:
-            return None
-
-    def best_offer(self): 
-        if len(self.offers) > 0:
-            return self.offers[0] 
-        else:
-            return None
             
     def __str__(self): 
       s = ""    
@@ -122,51 +95,51 @@ class OB:
     def p(self):
         print self.__str__()
         
-    def compute_order_flow_stats(self): 
+    def compute_stats(self): 
       best_offer_price = self.offers[0].price
       best_bid_price = self.bids[0].price
- 
+      stats = self.stats 
+      
       for a in self.actions: 
         action_type, side, p, v  = a
         if action_type == ADD_ACTION_TYPE:
-          self.offer_tr8dr += (p - best_offer_price) / best_offer_price 
+          stats.offer_tr8dr += (p - best_offer_price) / best_offer_price 
           if side == OFFER_SIDE:
-            self.added_offer_volume += v
-            self.added_offer_count += 1
+            stats.added_offer_volume += v
+            stats.added_offer_count += 1
             if p <= best_offer_price:
-              self.added_best_offer_volume += v
-              self.added_best_offer_count += 1
+              stats.added_best_offer_volume += v
+              stats.added_best_offer_count += 1
                        
             #base_price = best_offer_price
             #cumulative_volume = sum([order.size for order in self.offers if order.price <= p])
           else: 
-            self.bid_tr8dr += (p - best_bid_price) / best_bid_price 
-            self.added_bid_volume += v
-            self.added_bid_count += 1
+            stats.bid_tr8dr += (p - best_bid_price) / best_bid_price 
+            stats.added_bid_volume += v
+            stats.added_bid_count += 1
             if p >= best_bid_price:
-              self.added_best_bid_volume += v
-              self.added_best_bid_count += 1
+              stats.added_best_bid_volume += v
+              stats.added_best_bid_count += 1
             #base_price = best_bid_price
             #cumulative_volume = sum([order.size for order in self.bids if order.price >= p])
         elif action_type == DELETE_ACTION_TYPE:
           if side == OFFER_SIDE:
-            self.offer_tr8dr -= (p - best_offer_price) / best_offer_price 
+            stats.offer_tr8dr -= (p - best_offer_price) / best_offer_price 
             if p <= best_offer_price: 
-              self.filled_offer_volume += v 
-              self.filled_offer_count += 1 
+              stats.filled_offer_volume += v 
+              stats.filled_offer_count += 1 
             else:
-              self.canceled_offer_volume += v
-              self.canceled_offer_count += 1
+              stats.canceled_offer_volume += v
+              stats.canceled_offer_count += 1
           else:
-            self.bid_tr8dr -= (p - best_bid_price) / best_bid_price 
+            stats.bid_tr8dr -= (p - best_bid_price) / best_bid_price 
             if p >= best_bid_price:
-              self.filled_bid_volume += v
-              self.filled_bid_count += 1
+              stats.filled_bid_volume += v
+              stats.filled_bid_count += 1
             else:
-              self.canceled_bid_volume += v
-              self.canceled_bid_count += 1
-      self.deleted_bid_volume = self.canceled_bid_volume + self.filled_bid_volume
-      self.deleted_bid_count = self.canceled_bid_count + self.filled_bid_count
-      self.deleted_offer_volume = self.canceled_offer_volume + self.filled_offer_volume 
-      self.deleted_offer_count = self.canceled_offer_count + self.filled_offer_count
-         
+              stats.canceled_bid_volume += v
+              stats.canceled_bid_count += 1
+      #stats.deleted_bid_volume = stats.canceled_bid_volume + stats.filled_bid_volume
+      #stats.deleted_bid_count = stats.canceled_bid_count + stats.filled_bid_count
+      #stats.deleted_offer_volume = stats.canceled_offer_volume + stats.filled_offer_volume 
+      #stats.deleted_offer_count = stats.canceled_offer_count + stats.filled_offer_count

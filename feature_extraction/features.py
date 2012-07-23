@@ -1,7 +1,7 @@
 import math 
 
 def spread(orderBook):
-    return orderBook.offers[0].price - orderBook.bids[0].price 
+  return orderBook.offers[0].price - orderBook.bids[0].price 
     
 ## is the market locked or crossed?
 def locked(ob):
@@ -54,104 +54,111 @@ def midprice(orderBook):
     return (orderBook.offers[0].price + orderBook.bids[0].price) / 2 
 
 def total_added_volume(ob):
-    return ob.added_bid_volume  + ob.added_offer_volume
-    
+    return ob.stats.added_bid_volume  + ob.stats.added_offer_volume
+
+
+def deleted_bid_volume(ob):
+    return ob.stats.filled_bid_volume + ob.stats.canceled_bid_volume
+
+def deleted_offer_volume(ob):
+    return ob.stats.filled_offer_volume + ob.stats.canceled_offer_volume
+        
 def total_deleted_volume(ob):
-    return ob.deleted_bid_volume + ob.deleted_offer_volume
+    return deleted_bid_volume(ob) + deleted_offer_volume(ob)
 
 def net_volume(ob):
     return ob.added_bid_volume + ob.added_offer_volume \
-      - ob.deleted_bid_volume - ob.deleted_offer_volume
-
+      - deleted_bid_volume(ob) - deleted_offer_volume(ob)
+      
 
 ## tr8dr's insertion flow 
 
 def bid_tr8dr(ob):
-    return ob.bid_tr8dr
+    return ob.stats.bid_tr8dr
 
 def offer_tr8dr(ob):
-    return ob.offer_tr8dr
+    return ob.stats.offer_tr8dr
 
 def tr8dr(ob):
-    return ob.bid_tr8dr + ob.offer_tr8dr
+    return ob.stats.bid_tr8dr + ob.stats.offer_tr8dr
 
 ## Canceled = deleted from secondary levels 
 
 def canceled_bid_volume(ob):
-    return ob.canceled_bid_volume
+    return ob.stats.canceled_bid_volume
 
 def canceled_bid_count(ob):
-    return ob.canceled_bid_count
+    return ob.stats.canceled_bid_count
 
 def canceled_offer_volume(ob):
-    return ob.canceled_offer_volume 
+    return ob.stats.canceled_offer_volume 
 
 def canceled_offer_count(ob):
-    return ob.canceled_offer_count
+    return ob.stats.canceled_offer_count
 
 def total_canceled_volume(ob):
-    return ob.canceled_bid_volume + ob.canceled_offer_volume
+    return ob.stats.canceled_bid_volume + ob.stats.canceled_offer_volume
 
 
 ## Filled = deleted from best level 
 
 def filled_bid_volume(ob):
-    return ob.filled_bid_volume
+    return ob.stats.filled_bid_volume
 
 def filled_bid_count(ob):
-    return ob.filled_bid_count
+    return ob.stats.filled_bid_count
 
 def filled_offer_volume(ob):
-    return ob.filled_offer_volume
+    return ob.stats.filled_offer_volume
 
 def filled_offer_count(ob):
-    return ob.filled_offer_count 
+    return ob.stats.filled_offer_count 
 
 def total_filled_volume(ob):
-    return ob.filled_bid_volume  + ob.filled_offer_volume
+    return ob.stats.filled_bid_volume  + ob.stats.filled_offer_volume
     
 
 
 ## Add 
 
 def added_offer_volume(ob):
-    return ob.added_offer_volume
+    return ob.stats.added_offer_volume
 
 def added_offer_count(ob):
-    return ob.added_offer_count
+    return ob.stats.added_offer_count
 
 def added_bid_volume(ob):
-    return ob.added_bid_volume
+    return ob.stats.added_bid_volume
 
 def added_bid_count(ob):
-    return ob.added_bid_count
+    return ob.stats.added_bid_count
 
 
 
 def added_best_offer_volume(ob):
-    return ob.added_best_offer_volume
+    return ob.stats.added_best_offer_volume
 
 def added_best_offer_count(ob):
-    return ob.added_best_offer_count
+    return ob.stats.added_best_offer_count
 
 def added_best_bid_volume(ob):
-    return ob.added_best_bid_volume
+    return ob.stats.added_best_bid_volume
 
 def added_best_bid_count(ob):
-    return ob.added_best_bid_count
+    return ob.stats.added_best_bid_count
 
 ## Delete
 def deleted_offer_volume(ob):
-    return ob.deleted_offer_volume
+    return ob.stats.deleted_offer_volume
 
 def deleted_offer_count(ob):
-    return ob.deleted_offer_count
+    return ob.stats.deleted_offer_count
 
 def deleted_bid_volume(ob):
-    return ob.deleted_bid_volume
+    return ob.stats.deleted_bid_volume
 
 def deleted_bid_count(ob):
-    return ob.deleted_bid_count
+    return ob.stats.deleted_bid_count
 
 
 #############
