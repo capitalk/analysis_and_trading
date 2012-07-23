@@ -2,7 +2,7 @@ import features
 from featurePipeline import FeaturePipeline
 from optparse import OptionParser
 import os, os.path
-import h5py, gzip, datetime
+import h5py, datetime
 import boto
 import fnmatch 
 import progressbar  
@@ -69,7 +69,6 @@ extractor.add_feature('canceled_offer_count', features.canceled_offer_count, sum
  
  # file exists and 'finished' flag is true
 def file_already_done(filename):
-    print filename 
     if not os.path.exists(filename): 
       print "Doesn't exist"
       return False
@@ -81,18 +80,14 @@ def file_already_done(filename):
         has_date = 'year' in attrs and 'month' in attrs and 'day' in f.attrs 
         has_venue = 'venue' in attrs 
         has_features = 'features' in attrs
-        same_features = set(attrs['features']) == set(extractor.feature_fns.keys())
+        extractor_features =  extractor.feature_name_set()
+        same_features = set(attrs['features']) == extractor_features
         if not same_features:
-          print set(attrs['features']).symmetric_difference(extractor.feature_fns.keys())
-        print "finished", finished
-        print "date", has_date
-        print "venue", has_venue
-        print "has features", has_features
-        print "same_features", same_features
-        if not same_features:
-          print f.attrs
+          print "Different features:", \
+            set(attrs['features']).symmetric_difference(extractor_features)
         f.close()
-        return finished
+        return finished and has_ccy and has_date and has_venue and \
+          has_features and same_features  
     except:
         import sys
         print sys.exc_info()
@@ -106,7 +101,7 @@ def process_local_file(input_filename, dest_1ms, dest_100ms, max_books = None, h
       os.remove(dest_100ms)
     except OSError:
       pass
-  
+      
     # Deleted since it screws up comparisons of feature sets above 
     # and it's sort of hackish and not clearly useful 
     #if "JPY" in input_filename:
@@ -120,7 +115,8 @@ def process_local_file(input_filename, dest_1ms, dest_100ms, max_books = None, h
     #    extractor.add_feature(
     #      'last_offer_digit_near_zero', features.fourth_offer_digit_close_to_wrap)
     
-    header = extractor.run(input_filename, dest_1ms, dest_100ms, max_books = max_books)
+    header = \
+      extractor.run(input_filename, dest_1ms, dest_100ms, max_books = max_books)
 
     if heap_profile:
         print "Heap contents:"
@@ -183,17 +179,50 @@ def process_local_dir(input_path, output_dir = None, max_books = None, heap_prof
           print "Unknown suffix for", filename  
 
 
+def header_from_hdf_filename(filename):
+  f = h5py.File(filename)
+  a = f.attrs
+  
+  assert 'ccy1' in a
+  assert 'ccy2' in a
+  assert 'year' in a
+  assert 'month' in a
+  assert 'day' in a
+  assert 'venue' in a
+  assert 'start_time' in a
+  assert 'end_time' in a
+  assert 'features' in a
+  
+  header = {
+    'ccy': (a['ccy1'], a['ccy2']), 
+    'year' : a['year'],
+    'month' : a['month'], 
+    'day' : a['day'], 
+    'venue' : a['venue'], 
+    'start_time' : a['start_time'],
+    'end_time' : a['end_time'],
+    'features': a['features'], 
+  }
+  f.close()
+  return header
+
 def get_s3_cxn():
-  import boto 
   s3_cxn = boto.connect_s3('AKIAJSCF3K3HKREPYE6Q', 'Uz7zUOvBZzuMPLNKA2QmLaJ7lwDgJA2CYx5YZ5A0')
   if s3_cxn is None:
     raise RuntimeError("Couldn't connect to S3")
   else:
     return s3_cxn
 
-def process_s3_file(input_bucket_name, input_key_name, output_bucket_name = None):
-  if output_bucket_name is None:
-     output_bucket_name = input_bucket_name + "-hdf"
+def process_s3_file(input_bucket_name, input_key_name, 
+    output_bucket_name_1ms = None, 
+    output_bucket_name_100ms = None):
+  
+  if output_bucket_name_1ms is None:
+     output_bucket_name_1ms = input_bucket_name + "-hdf-1ms"
+  
+  if output_bucket_name_100ms is None:
+     output_bucket_name_100ms = input_bucket_name + "-hdf"
+     
   if os.access('/scratch/sgeadmin', os.F_OK | os.R_OK | os.W_OK):
     print 'Using /scratch/sgeadmin for local storage'
     tempdir = '/scratch/sgeadmin'
@@ -220,61 +249,82 @@ def process_s3_file(input_bucket_name, input_key_name, output_bucket_name = None
   else:
     in_key.get_contents_to_filename(input_filename)
   dest_1ms, dest_100ms = output_filenames(input_filename, tempdir)
+  
+  filename_1ms = os.path.split(dest_1ms)[1]  
+  filename_100ms = os.path.split(dest_100ms)[1] 
+  
+  out_bucket_1ms = s3_cxn.get_bucket(output_bucket_name_1ms)  
+  out_bucket_100ms = s3_cxn.get_bucket(output_bucket_name_100ms)
+    
+  out_key_1ms = out_bucket_1ms.get_key(filename_1ms)
+  out_key_100ms = out_bucket_100ms.get_key(filename_100ms)
+  
+  feature_set = set(extractor.feature_name_set())
+  
+  if out_key_1ms is not None and out_key_100ms is not None:
+    print "Found", out_key_1ms, "and", out_key_100ms, "already on S3"
+    features_1ms = out_key_1ms.get_metadata('features')
+    features_100ms = out_key_100ms.get_metadata('features')
+    if features_1ms is not None and features_100ms is not None and \
+      feature_set == features_1ms and feature_set == features_100ms:
+      print "HDFs on S3 have same features, so skipping this input..."
+      return
+    else:
+      print "HDFs on S3 have different features, so regenerating them..."
+        
   if file_already_done(dest_1ms) and file_already_done(dest_100ms):
-    print "Already generated HDFs"
-    f = h5y.File(dest_1ms)
-    import buildBook
-    a = f.attrs
-    header = {
-      'ccy': (a['ccy1'], a['ccy2']), 
-      'year' : a['year'],
-      'month' : a['month'], 
-      'day' : a['day'], 
-      'venue' : a['venue'], 
-      #'start_time' : a['start_time'],
-      #'end_time' : a['end_time'],
-      'features': a['features']
-    }
+    print "Found finished HDFs on local storage..."
+    header = header_from_hdf_filename(dest_1ms) 
   else:
     print "Running feature generator..."
     header = process_local_file(input_filename, dest_1ms, dest_100ms)
 
-  out_bucket = s3_cxn.create_bucket(output_bucket_name)
-  
+  if out_key_1ms is None:
+    out_key_1ms = boto.s3.key.Key(out_bucket_1ms)
+    out_key_1ms.key = filename_1ms
+  if out_key_100ms is None:
+    out_key_100ms = boto.s3.key.Key(out_bucket_100ms)
+    out_key_100ms.key = filename_100ms
+ 
   print "Uploading 1ms feature file..."
-  out_key_1ms = boto.s3.key.Key(out_bucket)
-  out_key_1ms.key = os.path.split(dest_1ms)[1]
   out_key_1ms.set_contents_from_filename(dest_1ms)
   for k,v in header.items():
     out_key_1ms.set_metadata(k, v)
-  
+ 
   print "Uploading 100ms feature file..."
-  out_key_100ms = boto.s3.key.Key(out_bucket)
-  out_key_100ms.key = os.path.split(dest_100ms)[1]
   out_key_100ms.set_contents_from_filename(dest_100ms)
   for k,v in header.items():
     out_key_100ms.set_metadata(k, v)
   
-
-
 def process_s3_files(input_bucket_name, key_glob = '*', 
-      output_bucket_name = None, use_cloud = True):
-  if output_bucket_name is None:
-    output_bucket_name = input_bucket_name + "-hdf"
+      output_bucket_name_1ms = None, 
+      output_bucket_name_100ms = None, 
+      use_cloud = True):
+      
+  if output_bucket_name_1ms is None:
+    output_bucket_name_1ms = input_bucket_name + "-hdf-1ms"
+  
+  if output_bucket_name_100ms is None:
+    output_bucket_name_100ms = input_bucket_name + "-hdf" 
+  
   s3_cxn = get_s3_cxn()    
   in_bucket = s3_cxn.get_bucket(input_bucket_name)
-
+  
+  # create output buckets if they don't already exist
+  # it's better to do this before launching remote computations 
+  s3_cxn.create_bucket(output_bucket_name_1ms)
+  s3_cxn.create_bucket(output_bucket_name_100ms)
+  
   matching_keys = []
   for k in in_bucket:
     if fnmatch.fnmatch(k.name, key_glob):
       matching_keys.append(k.name)
      
   if use_cloud:
-    
     print "Launching %d jobs" % len(matching_keys)
     
     jids = cloud.map(\
-      lambda k: process_s3_file(input_bucket_name, k, output_bucket_name), 
+      lambda k: process_s3_file(input_bucket_name, k, output_bucket_name_1ms, output_bucket_name_100ms), 
       matching_keys, _type = 'f2', _label='generate HDF' )
     
     progress = progressbar.ProgressBar(len(jids)).start()
@@ -287,7 +337,7 @@ def process_s3_files(input_bucket_name, key_glob = '*',
     print "Running locally..."
     print "%d keys match the pattern \'%s\'" % (len(matching_keys), key_glob)
     for key in matching_keys:
-      process_s3_file(input_bucket_name, key, output_bucket_name)
+      process_s3_file(input_bucket_name, key, output_bucket_name_1ms, output_bucket_name_100ms)
   print "Done!"
   
 parser = OptionParser(usage = "usage: %prog [options] path")
