@@ -144,39 +144,42 @@ def output_filenames(input_path, feature_dir = None):
   dest_100ms = os.path.join(feature_dir, no_ext + "_100ms.hdf")
   return dest_1ms, dest_100ms
 
-def process_local_dir(input_path, output_dir = None, max_books = None, heap_profile=False):
-    if not os.path.exists(input_path):
-        print "Specified path does not exist: ", input_path
-        exit()
-        
-    if os.path.isdir(input_path):
-        files = os.listdir(input_path)
-        basedir = input_path
-    else:
-        basedir = os.path.split(input_path)[0]
-        files = [os.path.basename(input_path)]
+def process_local_dir(input_path, output_dir = None, max_books = None,
+  heap_profile=False, overwrite = False):
   
-    count = 0
-    for filename in files:
-        if filename.endswith('.csv') or filename.endswith('.csv.gz'):
-            count += 1
-            input_filename = os.path.join(basedir, filename)
-            print "----"
-            print "Processing  #", count, " : ", input_filename
-            
-            dest_filename_1ms, dest_filename_100ms = \
-              output_filenames (input_filename, output_dir)
-            
-            if file_already_done(dest_filename_1ms) and \
-               file_already_done(dest_filename_100ms):
-                print "Skipping %s found data files %s" \
-                  % (input_filename, [dest_filename_1ms, dest_filename_100ms])
-            else:
-                process_local_file(input_filename,
-                   dest_filename_1ms, dest_filename_100ms, 
-                   max_books, heap_profile)
-        else:
-          print "Unknown suffix for", filename  
+  if not os.path.exists(input_path):
+    print "Specified path does not exist: ", input_path
+    exit()
+        
+  if os.path.isdir(input_path):
+    files = os.listdir(input_path)
+    basedir = input_path
+  else:
+    basedir = os.path.split(input_path)[0]
+    files = [os.path.basename(input_path)]
+  
+  count = 0
+  for filename in files:
+    if filename.endswith('.csv') or filename.endswith('.csv.gz'):
+      count += 1
+      input_filename = os.path.join(basedir, filename)
+      print "----"
+      print "Processing  #", count, " : ", input_filename
+      
+      dest_filename_1ms, dest_filename_100ms = \
+        output_filenames (input_filename, output_dir)
+      
+      if not overwrite and \
+         file_already_done(dest_filename_1ms) and \
+         file_already_done(dest_filename_100ms):
+          print "Skipping %s found data files %s" \
+            % (input_filename, [dest_filename_1ms, dest_filename_100ms])
+      else:
+          process_local_file(input_filename,
+             dest_filename_1ms, dest_filename_100ms, 
+             max_books, heap_profile)
+    else:
+      print "Unknown suffix for", filename  
 
 
 def header_from_hdf_filename(filename):
@@ -215,7 +218,8 @@ def get_s3_cxn():
 
 def process_s3_file(input_bucket_name, input_key_name, 
     output_bucket_name_1ms = None, 
-    output_bucket_name_100ms = None):
+    output_bucket_name_100ms = None, 
+    overwrite = False):
   
   if output_bucket_name_1ms is None:
      output_bucket_name_1ms = input_bucket_name + "-hdf-1ms"
@@ -261,7 +265,7 @@ def process_s3_file(input_bucket_name, input_key_name,
   
   feature_set = set(extractor.feature_name_set())
   
-  if out_key_1ms is not None and out_key_100ms is not None:
+  if not overwrite and out_key_1ms is not None and out_key_100ms is not None:
     print "Found", out_key_1ms, "and", out_key_100ms, "already on S3"
     features_1ms = out_key_1ms.get_metadata('features')
     features_100ms = out_key_100ms.get_metadata('features')
@@ -272,7 +276,7 @@ def process_s3_file(input_bucket_name, input_key_name,
     else:
       print "HDFs on S3 have different features, so regenerating them..."
         
-  if file_already_done(dest_1ms) and file_already_done(dest_100ms):
+  if not overwrite and file_already_done(dest_1ms) and file_already_done(dest_100ms):
     print "Found finished HDFs on local storage..."
     header = header_from_hdf_filename(dest_1ms) 
   else:
@@ -299,6 +303,7 @@ def process_s3_file(input_bucket_name, input_key_name,
 def process_s3_files(input_bucket_name, key_glob = '*', 
       output_bucket_name_1ms = None, 
       output_bucket_name_100ms = None, 
+      overwrite = False, 
       use_cloud = True):
       
   if output_bucket_name_1ms is None:
@@ -322,10 +327,14 @@ def process_s3_files(input_bucket_name, key_glob = '*',
      
   if use_cloud:
     print "Launching %d jobs" % len(matching_keys)
-    
-    jids = cloud.map(\
-      lambda k: process_s3_file(input_bucket_name, k, output_bucket_name_1ms, output_bucket_name_100ms), 
-      matching_keys, _type = 'f2', _label='generate HDF' )
+    def do_work(key_name):
+      return process_s3_file(
+        input_bucket_name, 
+        key_name, 
+        output_bucket_name_1ms, 
+        output_bucket_name_100ms, 
+        overwrite)
+    jids = cloud.map(do_work, matching_keys, _type = 'f2', _label='generate HDF')
     
     progress = progressbar.ProgressBar(len(jids)).start()
     n_finished = 0
@@ -343,6 +352,10 @@ def process_s3_files(input_bucket_name, key_glob = '*',
 parser = OptionParser(usage = "usage: %prog [options] path")
 parser.add_option("-m", "--max-books", dest="max_books",
   type="int", help="maximum number of order books to read", default=None)
+  
+parser.add_option("-o", "--overwrite", dest="overwrite", default=False, 
+  action="store_true", help="Overwrite existing HDF files")
+  
 parser.add_option("-d", "--feature-dir",
   dest="feature_dir", default=None, type="string",
   help="which directory should we write feature files to")
@@ -361,9 +374,10 @@ if __name__ == '__main__':
     assert bucket and len(bucket) > 0
     assert pattern and len(pattern) > 0
     print "Bucket = %s, pattern = %s" % (bucket, pattern)
-    process_s3_files(bucket, pattern)
+    process_s3_files(bucket, pattern, options.overwrite)
   else:
     process_local_dir(args[0],
       options.feature_dir,
       options.max_books, 
-      options.heap_profile)
+      options.heap_profile, 
+      options.overwrite)
