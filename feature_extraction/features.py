@@ -56,19 +56,9 @@ def midprice(orderBook, stats):
 def total_added_volume(ob, stats):
     return ob.stats.added_bid_volume  + ob.stats.added_offer_volume
 
-
-def deleted_bid_volume(ob, stats):
-    return stats.deleted_bid_volume
-
-def deleted_offer_volume(ob, stats):
-    return stats.deleted_offer_volume
-        
-def total_deleted_volume(ob, stats):
-    return stats.deleted_offer_volume + stats.deleted_bid_volume
-
 def net_volume(ob, stats):
     return ob.added_bid_volume + ob.added_offer_volume \
-      - deleted_bid_volume(ob) - deleted_offer_volume(ob)
+      - ob.deleted_bid_volume - ob.deleted_offer_volume
       
 
 ## tr8dr's insertion flow 
@@ -158,6 +148,8 @@ def deleted_bid_volume(ob, stats):
 def deleted_bid_count(ob, stats):
     return stats.deleted_bid_count
 
+def total_deleted_volume(ob, stats):
+    return stats.deleted_offer_volume + stats.deleted_bid_volume
 
 #############
 
@@ -172,24 +164,24 @@ def message_count(orderBook, stats):
 
 # cache results 
 def bid_volume(orderBook, stats): 
-    if hasattr(orderBook, 'bidVolume'): 
-        return orderBook.bidVolume 
+    if hasattr(stats, 'total_bid_volume'): 
+        return stats.total_bid_volume
     else: 
       bidVolume = 0.0 
       for order in orderBook.bids:
           bidVolume += order.size
-      orderBook.bidVolume = bidVolume 
+      stats.total_bid_volume = bidVolume 
       return bidVolume 
 
 # cache results 
-def offer_volume(orderBook, stats): 
-    if hasattr(orderBook, 'offerVolume'): 
-        return orderBook.offerVolume 
+def offer_volume(ob, stats): 
+    if hasattr(stats, 'total_offer_volume'): 
+        return stats.total_offer_volume 
     else: 
       offerVolume = 0.0 
-      for order in orderBook.offers:
-          offerVolume += order.size
-      orderBook.offerVolume = offerVolume 
+      for order in ob.offers:
+        offerVolume += order.size
+      stats.total_offer_volume = offerVolume 
       return offerVolume 
 
 def best_offer_volume(ob, stats): 
@@ -202,28 +194,23 @@ def best_bid_volume(ob, stats):
 def bid_vwap(ob, stats): 
     p = 0
     v = 0  
-    i = 0 
-    for order in ob.bids:
-        p += order.price * order.size
-        v += order.size
-        i += 1
-        if i >= 4: break  
+    for (i, order) in enumerate(ob.bids):
+      p += order.price * order.size
+      v += order.size
+      if i >= 4: break  
     return p / v
 
 def offer_vwap(ob, stats):
     p = 0 
     v = 0
-    i = 0
-    for order in ob.offers:
+    for (i, order) in enumerate(ob.offers):
       p += order.price * order.size 
       v += order.size
-      i += 1
       if i >= 4: break 
     return p / v
 
 def fraction_of_second(orderBook, stats): 
-    t = orderBook.lastUpdateTime 
-    return (t % 1000.0) / 1000.0
+    return (orderBook.lastUpdateTime  % 1000.0) / 1000.0
 
 def nth_digit(x,n):
     x = abs(x)

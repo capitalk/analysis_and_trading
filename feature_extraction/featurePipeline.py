@@ -16,77 +16,103 @@ def show_heap_info():
   print heap[0].byid
 
 
-# given a series of unevenly spaced 1ms, average every 100ms by giving
-# higher weights to values which survive longer 
-def time_weighted_average_100ms(feature_1ms, start_indices, end_indices, milliseconds, frame_times):
-    n = len(frame_times)
+
+def time_weighted_average_100ms(feature_1ms, milliseconds, 
+      start_indices, end_indices, frame_end_times):
+    """
+    Given a series of unevenly spaced 1ms feature samples, 
+    average every 100ms frame by weighing each 1ms value by what percent
+    of the frame it survives. 
+    - feature_1ms : data we're trying to aggregate
+    - milliseconds : at which time did each feature sample arrive?  
+    - start_indices : which index in the uneven data corresponds to the start
+        of a 100ms frame
+    - end_indices : which index in the uneven is one 
+        past the end of a 100ms frame
+    - frame_end_times : at what time does each 100ms frame end? 
+    """
+    feature_100ms = np.zeros(len(frame_end_times))
     
-    feature_100ms = np.zeros(n)
     
-    
-    # keep around big arrays to prevent from having to keep recomputing this
-    #time_buffer = np.zeros(102, dtype='int')
-    weights = np.zeros(101, dtype='int')
     
     tick_counts = end_indices - start_indices 
     
-    for (i, frame_end_t) in enumerate(frame_times): 
-        n_ticks = tick_counts[i]
-        if n_ticks == 0:
-          feature_100ms[i] = feature_100ms[i-1]
-        elif n_ticks == 1:
-          start_idx = start_indices[i]
-          frame_start_t = frame_end_t - 100
-          t = milliseconds[start_idx] - frame_start_t 
-          #sys.stdout.write(str(t)+", ")
-          past = feature_1ms[start_idx-1] * t
-          curr = feature_1ms[start_idx] * (100-t)
-          
-          feature_100ms[i] = (curr + past) / 100.0  
-        else:
-            frame_start_t = frame_end_t - 100 
-            start_idx = start_indices[i] 
-            end_idx = end_indices[i] 
-            
+    # either last sample in the 100ms frame, or, 
+    # if the frame was empty, the last received sample before
+    last_sample = feature_1ms[end_indices-1]
+    
+    no_messages_idx = np.where(tick_counts == 0)[0]
+    if len(no_messages_idx) > 0: 
+      feature_100ms[no_messages_idx] = last_sample.take(no_messages_idx)
+    
+    one_message_idx = np.where(tick_counts == 1)[0]
+    if len(one_message_idx) > 0:
+      one_message_frame_end_times = frame_end_times.take(one_message_idx)
+      one_message_frame_start_times = one_message_frame_end_times - 100
+      one_message_1ms_idx = start_indices.take(one_message_idx)
+      one_message_time_since_frame_start = \
+        milliseconds[one_message_1ms_idx] - one_message_frame_start_times
+    
+      if 0 in one_message_idx:
+        feature_100ms[0] = feature_1ms[0]
+        one_message_1ms_idx = one_message_1ms_idx[1:]
+    
+      past = feature_1ms.take(one_message_1ms_idx-1) * one_message_time_since_frame_start
+      curr = feature_1ms.take(one_message_1ms_idx) * (100 - one_message_time_since_frame_start)
+      feature_100ms[one_message_idx] = (past + curr) / 100.0
+    
+    multiple_message_idx = np.where(tick_counts > 1)[0]
+    # keep around big arrays to prevent from having to keep recomputing this
+    weights = np.zeros(101, dtype='int')
+    
+    if 0 in multiple_message_idx:
+      n_ticks = tick_counts[0]
+      frame_end_t = frame_end_times[0]
+      frame_start_t = frame_end_t - 100 
+      start_idx = 0
+      end_idx = end_indices[0] 
+      # weights are time between frame arrivals
+      relative_t = milliseconds[:end_idx] - frame_start_t
+      weights[:n_ticks-1] = np.diff(relative_t)
+      weights[n_ticks-1] = 100 - relative_t[-1]
+      weight_slice = weights[:n_ticks]
+      feature_slice = feature_1ms[:end_idx]  
+      total_weight = np.sum(weight_slice)  
+      feature_100ms[0] = np.dot(weight_slice, feature_slice) / total_weight
       
-            first_tick_t = milliseconds[start_idx] 
-            
-            if (first_tick_t == 1) or (i == 0):
-              # weights are time between frame arrivals
-              relative_t = milliseconds[start_idx:end_idx] - frame_start_t
-              weights[:n_ticks-1] = np.diff(relative_t)
-              weights[n_ticks-1] = 100 - relative_t[-1]
-              weight_slice = weights[:n_ticks]
-              feature_slice = feature_1ms[start_idx:end_idx]  
-              total_weight = np.sum(weight_slice)  
-              feature_100ms[i] = np.dot(weight_slice, feature_slice) / total_weight
-            else:
-              #print 
-              #print "curr", milliseconds[start_idx:end_idx], "  before", milliseconds[start_idx-1], "  after", milliseconds[end_idx]
-              #print 
+      # drop  0 from the list of indices
+      multiple_message_idx = multiple_message_idx[1:]
+    if len(multiple_message_idx) > 0:  
+      for i in multiple_message_idx: 
+        n_ticks = tick_counts[i]
+        frame_end_t = frame_end_times[i]
+        frame_start_t = frame_end_t - 100 
+        start_idx = start_indices[i] 
+        end_idx = end_indices[i] 
+        # reach back to the last 1ms in the previous frame
+        relative_t = milliseconds[start_idx:end_idx] - frame_start_t
+        weights[0] = relative_t[0]
+        weights[1:n_ticks] = np.diff(relative_t)
+        weights[n_ticks] = 100 - relative_t[-1]
+        weight_slice = weights[:n_ticks+1]
               
-              # if there's no frame on the first 1ms, then we need to 
-              # reach back to the last 1ms in the previous frame
-              relative_t = milliseconds[start_idx:end_idx] - frame_start_t
-              weights[0] = relative_t[0]
-              weights[1:n_ticks] = np.diff(relative_t)
-              weights[n_ticks] = 100 - relative_t[-1]
-              weight_slice = weights[:n_ticks+1]
-              
-              feature_slice = feature_1ms[start_idx-1:end_idx] 
-              feature_100ms[i] = np.dot(weight_slice, feature_slice) / 100.0 
+        feature_slice = feature_1ms[start_idx-1:end_idx] 
+        feature_100ms[i] = np.dot(weight_slice, feature_slice) / 100.0 
     return feature_100ms 
 
 def sum_100ms(feature_1ms, start_indices, end_indices):
     n = len(start_indices)
     feature_100ms = np.zeros(n, dtype='float')
     diffs = end_indices - start_indices 
-    for (i, diff) in enumerate(diffs): 
-        if diff > 1:
-          ticks = feature_1ms[start_indices[i] :end_indices[i]]
-          feature_100ms[i] = np.sum(ticks)
-        elif diff == 1:
-          feature_100ms[i] = feature_1ms[start_indices[i]]
+    # if there's only one 1ms sample in the whole 100ms period, 
+    # then just copy over that sample 
+    only_one = (diffs==1)
+    feature_100ms[only_one] = feature_1ms[np.array(start_indices[only_one])]
+    # now loop over all the periods when more than one sample needs to be 
+    # averaged 
+    for i in np.where(diffs>1)[0]: 
+      ticks = feature_1ms[start_indices[i] :end_indices[i]]
+      feature_100ms[i] = np.sum(ticks)
     return feature_100ms
 
     
@@ -167,7 +193,7 @@ def features_from_filename(
 def make_frame_indices(times, unique_times, scale=1):
     num_unique_times = len(unique_times)
     num_raw_times = len(times)
-    window_start_indices = np.zeros(num_unique_times)
+    window_start_indices = np.zeros(num_unique_times, dtype='int')
     search_start = 0 
     for i, t in enumerate(unique_times):
         search_t = t - scale + 1
@@ -205,21 +231,20 @@ def aggregate_1ms_frames(features, frame_reducers, output=True):
         if name != 't':
             raw = features[name] 
             result = np.zeros(num_unique_times)
-            for i in xrange(num_unique_times):
-                start_idx = window_starts[i] 
-                end_idx = window_ends[i]
-                if end_idx > start_idx + 1: 
-                  curr_slice = raw[start_idx:end_idx] 
-                  result[i] = fn(curr_slice)
-                else:
-                  result[i] = raw[start_idx]
+            lengths = window_ends - window_starts
+            only_one_idx = (lengths==1)
+            result[only_one_idx] = raw[window_starts[only_one_idx]]
+            
+            for i in np.where(lengths > 1)[0]: 
+                curr_slice = raw[window_starts[i]:window_ends[i]] 
+                result[i] = fn(curr_slice)
+              
             frames_1ms[name] = result
         counter += 1
         if output: progress.update(counter)
     if output: progress.finish() 
     if output: print 
     return frames_1ms 
-    
     
 
 #gzip, lzf, or None
@@ -267,12 +292,20 @@ class FeaturePipeline:
         
         if output: 
           print "Generating 100ms frame indices..." 
-        frame_times = np.arange(round_start, round_end+1, 100)    
-        n = len(frame_times)
-        start_indices = np.zeros(n)
-        end_indices = np.zeros(n)
-        empty_frames = np.zeros(n, dtype='bool')
-        for (i, frame_end_t) in enumerate(frame_times):
+        # if your 1ms ticks start at 100ms, then your first end_time is 200ms
+        if start_millisecond == round_start:
+          frame_end_times = np.arange(round_start+100, round_end+1, 100)
+        # ...but if a 1ms tick is at 99ms, then you first end_time is 100ms:
+        else:
+          frame_end_times = np.arange(round_start, round_end+1, 100)  
+            
+        n_100ms_frames = len(frame_end_times)
+        # map each 100ms frame to its indices in vectors of 1ms data 
+        frame_start_indices = np.zeros(n_100ms_frames, dtype = 'int')
+        frame_end_indices = np.zeros(n_100ms_frames, dtype = 'int')
+        empty_frames = np.zeros(n_100ms_frames, dtype='bool')
+        
+        for (i, frame_end_t) in enumerate(frame_end_times):
             frame_start_t = frame_end_t - 100 
             # search for leftmost occurrence of frame start time 
             start_idx = bisect.bisect_left(milliseconds, frame_start_t)
@@ -284,11 +317,11 @@ class FeaturePipeline:
                 end_idx = bisect.bisect_left(milliseconds, frame_end_t, start_idx) 
               
             # start indices exclude time (t - 100)
-            start_indices[i] = start_idx
+            frame_start_indices[i] = start_idx
             # end indices include time t
-            end_indices[i] = end_idx
+            frame_end_indices[i] = end_idx
         
-        features_100ms = {'t': frame_times, 'null_100ms_frame': empty_frames}
+        features_100ms = {'t': frame_end_times, 'null_100ms_frame': empty_frames}
         
         print "Aggregating 100ms frames..." 
         
@@ -302,14 +335,16 @@ class FeaturePipeline:
             # time, and counts get compute separately from normal features 
             if fName != 't' and fName != 'time_since_last_message': 
                 if self.sum_100ms_feature[fName]:
-                    features_100ms[fName] = sum_100ms(vec_1ms, start_indices, end_indices)
+                    features_100ms[fName] = \
+                      sum_100ms(vec_1ms, frame_start_indices, frame_end_indices)
                 else:
                     features_100ms[fName] = \
-                      time_weighted_average_100ms(vec_1ms, 
-                        start_indices, 
-                        end_indices, 
-                        milliseconds, 
-                        frame_times)
+                      time_weighted_average_100ms(
+                        vec_1ms,
+                        milliseconds,  
+                        frame_start_indices, 
+                        frame_end_indices, 
+                        frame_end_times)
             n_completed += 1
             if output:
               progress.update(n_completed)
@@ -321,13 +356,13 @@ class FeaturePipeline:
         # the frame's end. for null frames this will reach back to a time > 100ms.
         # Also, compute the total message count over the frame, which 
         # is simply summed over the individual 1ms counts 
-        time_since_last_message = np.zeros(n)
-        small_frame_count = np.zeros(n)
-        for i in xrange(n):
-            start_idx = start_indices[i]
-            end_idx = end_indices[i] 
-            time_since_last_message[i] = frame_times[i] - milliseconds[end_indices[i] - 1]
-            small_frame_count[i] = end_idx - start_idx + 1 
+        time_since_last_message = np.zeros(n_100ms_frames, dtype='int')
+        small_frame_count = np.zeros(n_100ms_frames, dtype='int')
+        
+        for i in xrange(n_100ms_frames):
+            time_since_last_message[i] = \
+              frame_end_times[i] - milliseconds[frame_end_indices[i] - 1]
+            small_frame_count[i] = frame_end_indices[i]  - frame_start_indices[i] + 1 
         features_100ms['time_since_last_message'] = time_since_last_message 
         features_100ms['1ms_frame_count'] = small_frame_count 
 

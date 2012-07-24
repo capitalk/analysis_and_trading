@@ -3,7 +3,7 @@ from optparse import OptionParser
 from datetime import datetime
 
 import sys
-from orderBook import Order, OB
+from orderBook import Order, OB, Action 
 from orderBook import ADD_ACTION_TYPE, MODIFY_ACTION_TYPE, DELETE_ACTION_TYPE
 from orderBook import BID_SIDE, OFFER_SIDE 
 import orderBookConstants
@@ -93,9 +93,11 @@ lastMillisecond = None
 lastSecond = None 
 lastDatetime = None 
 def parse_datetime_opt(s):
+    
     global lastDatetime 
     global lastMillisecond
     global lastSecond
+    
     second = int(s[15:17])
     millisecond = int(s[18:21])
     
@@ -155,7 +157,32 @@ def books_from_lines_v1(lines, debug=False, end=None, drop_out_of_order=False):
             elif (side == obc.OFFER): currBook.add_offer(entry)
     return book_list 
 
+# slower but saves memory
+def parse_int(s, cache= {}):
+  if s in cache: 
+    return cache[s]
+  else:
+    i = int(s)
+    cache[s] = i
+    return i 
 
+def parse_int_with_decimal_point(s, cache={}):
+  if s in cache:
+    return cache[s]
+  else:
+    i = int(float(s))
+    cache[s] = i
+    return i
+
+def parse_float(s, cache={}):
+  if s in cache: 
+    return cache[s]
+  else:
+    f = float(s)
+    cache[s] = f
+    return f 
+
+  
 class V3_Parser:
     def __init__(self): 
         self.header = {} 
@@ -168,6 +195,7 @@ class V3_Parser:
         self.actions = []    
         self.SECONDS_PER_DAY = 60 * 60 * 24     
         self.order_cache = {}
+        self.action_cache = {}
 
 
     def header_ok(self, f):
@@ -213,26 +241,36 @@ class V3_Parser:
         _, side, volume, price, _ = line.split(',')
         action_type = ADD_ACTION_TYPE,
         side = OFFER_SIDE if side == '1' else BID_SIDE,
-        price = float(price), 
-        volume = int(float(volume))
-        self.actions.append( (action_type, side, price, volume) )
+        price = parse_float(price) 
+        # I think I saw trailing decimal points in some logs, 
+        # so parse as float just in case 
+        volume = parse_int_with_decimal_point(volume)
+        action = (action_type, side, price, volume) 
+        if action in self.action_cache: action = self.action_cache[action]
+        else: self.action_cache[action] = action 
+        self.actions.append(action)
             
-    
     def parse_delete_action(self, line):
         _, side, volume, price, _ = line.split(',')
         action_type = DELETE_ACTION_TYPE
         side = OFFER_SIDE if side == '1' else BID_SIDE,
-        price = float(price)
-        volume = int(float(volume))
-        self.actions.append( (action_type, side, price, volume) )
+        price = parse_float(price)
+        volume = parse_int_with_decimal_point(volume)
+        action = (action_type, side, price, volume)
+        if action in self.action_cache: action = self.action_cache[action]
+        else: self.action_cache[action] = action
+        self.actions.append(action)
           
     def parse_modify_action(self, line):
         _, side, volume, price, _ = line.split(',')
         action_type = MODIFY_ACTION_TYPE
         side = OFFER_SIDE if side == '1' else BID_SIDE
-        price = float(price)
-        volume = int(float(volume))
-        self.actions.append( (action_type, side, price, volume) )
+        price = parse_float(price)
+        volume = parse_int_with_decimal_point(volume)
+        action = (action_type, side, price, volume)
+        if action in self.action_cache: action = self.action_cache[action]
+        else: self.action_cache[action] = action
+        self.actions.append(action)
             
     def start_new_orderbook(self, line):         
         self.at_start_of_file = False 
@@ -265,9 +303,8 @@ class V3_Parser:
         pass
 
  
-    def parse(self, f, debug=False, end=None, drop_out_of_order=False, start_from_line = None):
-      
-         
+    def parse(self, f, debug=False, end=None, drop_out_of_order=False):
+     
         dispatch_table = {
             'V': self.parse_header, 
             'A': self.parse_add_action, 

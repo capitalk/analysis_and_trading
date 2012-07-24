@@ -3,28 +3,8 @@ from collections import namedtuple
   
 OFFER_SIDE = True
 BID_SIDE = False
-  
-class Order:
-    def __init__(self, 
-            timestamp=None,
-            side=None, 
-            level=None, 
-            price=None, 
-            size=None):  # orderdepthcount=None, ccy = None
-        self.timestamp = timestamp
-        self.side = side
-        self.level = level
-        self.price = price
-        self.size = size
-        #self.orderdepthcount = orderdepthcount
-        #self.ccy = ccy 
-    
-    def __str__(self):
-      return "%s, %s, %s, %s, %s" % (self.timestamp, self.level, self.price, self.size)
 
-    def p(self):
-        print self.__str__()
-
+Order = namedtuple("Order", ("timestamp", "side", "level", "price", "size"))  
 
 ADD_ACTION_TYPE = 'A'
 DELETE_ACTION_TYPE = 'D' 
@@ -34,6 +14,7 @@ MODIFY_ACTION_TYPE = 'M'
 Action = namedtuple('Action', ('action_type', 'side', 'price', 'size'))
 
 class OrderBookStats:
+  
   def __init__(self, best_bid_price, best_bid_vol, best_offer_price, best_offer_vol):
     self.best_bid_price = best_bid_price
     self.best_bid_volume = best_bid_vol
