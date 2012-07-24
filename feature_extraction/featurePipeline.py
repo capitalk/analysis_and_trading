@@ -92,9 +92,7 @@ def sum_100ms(feature_1ms, start_indices, end_indices):
     
 
 # given a list of books, return a dictionary of feature vectors 
-def features_from_books(books, feature_fns, feature_uses_prev_orderbook, show_progress=False, output=True):
-    result = {}
-    
+def features_from_books(books, feature_fns, show_progress=False, output=True):
     # these should all be from the same day, so discard any with days
     # other than a book in the middle 
     valid_day = books[len(books)/2].day
@@ -104,47 +102,34 @@ def features_from_books(books, feature_fns, feature_uses_prev_orderbook, show_pr
       book.bids and book.offers and book.day == valid_day]
     # generator expression to count all invalid books 
     
-    
     numInvalid = len(books) - len(validBooks)
     
     if output:
       print "Keeping %d of %d order books (%d dropped)" % \
         (len(validBooks), len(books), numInvalid)
-      
-    prevBook = validBooks[0]
-    validBooks = validBooks[1:]
-    
-    
+            
     n = len(validBooks)
     nfeatures = len(feature_fns)
     
     if output: 
       print "Extracting %d features...." % nfeatures
 
+    result = {}
+    for feature_name in feature_fns.keys(): 
+      dtype = 'int' if feature_name == 't' else 'float'
+      result[feature_name] = np.zeros(n, dtype=dtype)
     
-    if show_progress: progress = progressbar.ProgressBar(nfeatures).start()
-    for (featurenum, (name, fn)) in enumerate(feature_fns.items()): 
-        if name != 'midprice' and name != 'spread':
-            # in the future we should probably track feature types, 
-            # but for now assume everything except time is a float 
-            if name != 't': timeseries = np.zeros(n)
-            else: timeseries = np.zeros(n, dtype='int')
-            if feature_uses_prev_orderbook[name]:
-                for (i,book) in enumerate(validBooks):
-                    book.compute_stats()
-                    timeseries[i] = fn(prevBook, book)
-                    prevBook = book 
-            else:
-                for (i, book) in enumerate(validBooks):
-                    book.compute_stats()
-                    timeseries[i] = fn(book)
-            result[name] = timeseries
-        if show_progress: progress.update(featurenum)
-    if show_progress: progress.finish()
-    if 'spread' in feature_fns:
-        result['spread'] = result['offer'] - result['bid'] 
-    if 'midprice' in feature_fns:
-        result['midprice'] = (result['offer'] + result['bid']) / 2
+    if show_progress: progress = progressbar.ProgressBar(n).start()  
+    for (i,book) in enumerate(validBooks):
+      stats = book.compute_stats()
+      for (feature_name, fn) in feature_fns.iteritems():
+        if fn:
+          result[feature_name][i] = fn(book, stats) 
+        else:
+          result[feature_name][i] = stats[feature_name]
+      if show_progress: progress.update(i)
+    progress.finish()   
+          
     if output: print 
     return result   
 
@@ -152,7 +137,6 @@ def features_from_books(books, feature_fns, feature_uses_prev_orderbook, show_pr
 def features_from_filename(
   filename, 
   feature_fns, 
-  feature_uses_prev_orderbook, 
   debug=False, 
   max_books=None, 
   show_progress=False, 
@@ -167,7 +151,7 @@ def features_from_filename(
       show_heap_info()
     if max_books: books = books[:max_books]
     features = \
-      features_from_books(books, feature_fns, feature_uses_prev_orderbook, 
+      features_from_books(books, feature_fns, 
         show_progress=show_progress, output=output)
     if heap_profile: 
       print "=== Heap after extracting features ==="
@@ -252,7 +236,6 @@ class FeaturePipeline:
     
     def __init__(self):
         self.feature_fns = {} 
-        self.feature_uses_prev_orderbook = {} 
 
         # maps feature name to list of (name,fn) pairs
         self.feature_uses_reducers = {
@@ -266,13 +249,11 @@ class FeaturePipeline:
             
 
     def add_feature(self, name, fn, 
-            use_prev_orderbook=False, 
             use_window_reducers = True, 
             frame_reducer_1ms=aggregators.last, 
             sum_100ms = False):
         self.feature_fns[name] = fn
         self.frame_reducers_1ms[name] = frame_reducer_1ms
-        self.feature_uses_prev_orderbook[name] = use_prev_orderbook
         self.feature_uses_reducers[name] = use_window_reducers 
         self.sum_100ms_feature[name] = sum_100ms 
          
@@ -392,7 +373,6 @@ class FeaturePipeline:
         
         header, raw_features = features_from_filename(input_filename,  
           self.feature_fns, 
-          self.feature_uses_prev_orderbook, 
           max_books=max_books, 
           show_progress=True, 
           heap_profile = heap_profile)

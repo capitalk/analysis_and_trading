@@ -33,31 +33,41 @@ MODIFY_ACTION_TYPE = 'M'
 # actions are now just tuples, so use these positions instead of fields
 Action = namedtuple('Action', ('action_type', 'side', 'price', 'size'))
 
-ob_stat_names = (
- 'bid_tr8dr', 'offer_tr8dr', 
- 'filled_bid_volume', 'filled_bid_count', 
- 'filled_offer_volume', 'filled_offer_count',
- 'canceled_bid_volume', 'canceled_bid_count',
- 'canceled_offer_volume', 'canceled_offer_count',
- 'added_bid_volume', 'added_bid_count',  
- 'added_offer_volume', 'added_offer_count',
- 'added_best_bid_volume', 'added_best_bid_count', 
- 'added_best_offer_volume', 'added_best_offer_count', 
- 'total_bid_volume', 'total_offer_volume' )
+class OrderBookStats:
+  def __init__(self, best_bid_price, best_bid_vol, best_offer_price, best_offer_vol):
+    self.best_bid_price = best_bid_price
+    self.best_bid_volume = best_bid_vol
+    self.best_offer_price = best_offer_price
+    self.best_offer_volume = best_offer_vol
+    self.bid_tr8dr = 0
+    self.offer_tr8dr = 0
+    self.filled_bid_volume = 0
+    self.filled_bid_count = 0
+    self.filled_offer_volume = 0
+    self.filled_offer_count = 0
+    self.canceled_bid_volume = 0
+    self.canceled_bid_count = 0
+    self.canceled_offer_volume = 0
+    self.canceled_offer_count = 0
+    self.added_bid_volume = 0
+    self.added_bid_count = 0
+    self.added_offer_volume = 0
+    self.added_offer_count = 0
+    self.added_best_bid_volume = 0
+    self.added_best_bid_count = 0
+    self.added_best_offer_volume = 0
+    self.added_best_offer_count = 0
+    self.total_bid_volume = 0
+    self.total_offer_volume = 0
+    self.deleted_bid_volume = 0
+    self.deleted_bid_count = 0
+    self.deleted_offer_volume = 0
+    self.deleted_offer_count = 0
  
- # these are redundant since deleted = filled + canceled
- #'deleted_bid_volume', 'deleted_bid_count',
- #'deleted_offer_volume', 'deleted_offer_count',
-
-
-ob_stat_init_zeros = [0] * len(ob_stat_names)
-
-OrderBookStats = namedtuple('OrderBookStats', ob_stat_names)
-
 class OB:
     __slots__ = [
       'bids', 'offers', 'day', 'lastUpdateTime', 
-      'lastUpdateMonotonic', 'actions', 'stats']
+      'lastUpdateMonotonic', 'actions']
       
     """day = days since unix start time"""
     def __init__(self, day, lastUpdateTime, lastUpdateMonotonic = None, actions = []):
@@ -67,7 +77,6 @@ class OB:
         self.lastUpdateTime = lastUpdateTime
         self.lastUpdateMonotonic = lastUpdateMonotonic
         self.actions = actions 
-        self.stats = OrderBookStats(*ob_stat_init_zeros)
         
     def add_order(self, order):
       if order.side == OFFER_SIDE: 
@@ -94,11 +103,16 @@ class OB:
 
     def p(self):
         print self.__str__()
+    
         
     def compute_stats(self): 
+      # Warning: assumesa len(self.bids) > 0 and len(self.offers) > 0, 
+      # be sure to filter out orderbooks where some side is empty 
+      
       best_offer_price = self.offers[0].price
       best_bid_price = self.bids[0].price
-      stats = self.stats 
+      
+      stats = OrderBookStats(best_bid_price, self.bids[0].size, best_offer_price, self.offers[0].size)
       
       for a in self.actions: 
         action_type, side, p, v  = a
@@ -139,7 +153,8 @@ class OB:
             else:
               stats.canceled_bid_volume += v
               stats.canceled_bid_count += 1
-      #stats.deleted_bid_volume = stats.canceled_bid_volume + stats.filled_bid_volume
-      #stats.deleted_bid_count = stats.canceled_bid_count + stats.filled_bid_count
-      #stats.deleted_offer_volume = stats.canceled_offer_volume + stats.filled_offer_volume 
-      #stats.deleted_offer_count = stats.canceled_offer_count + stats.filled_offer_count
+      stats.deleted_bid_volume = stats.canceled_bid_volume + stats.filled_bid_volume
+      stats.deleted_bid_count = stats.canceled_bid_count + stats.filled_bid_count
+      stats.deleted_offer_volume = stats.canceled_offer_volume + stats.filled_offer_volume 
+      stats.deleted_offer_count = stats.canceled_offer_count + stats.filled_offer_count
+      return stats

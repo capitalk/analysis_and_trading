@@ -1,26 +1,26 @@
 import math 
 
-def spread(orderBook):
-  return orderBook.offers[0].price - orderBook.bids[0].price 
+def spread(ob, stats):
+  return stats.best_offer_price - stats.best_bid_price
     
 ## is the market locked or crossed?
-def locked(ob):
-  return ob.offers[0].price == ob.bids[0].price
+def locked(ob, stats):
+  return stats.best_offer_price == stats.best_bid_price
 
-def crossed(ob):
-  return ob.offers[0].price < ob.bids[0].price
-
+def crossed(ob, stats):
+  return stats.best_offer_price < stats.best_bid_price
+  
 ## difference between the best level and 5 levels away
 
-def bid_range(orderBook):
-    last_idx = min(4, len(orderBook.bids) - 1)
-    return orderBook.bids[0].price - orderBook.bids[last_idx].price
+def bid_range(ob, stats):
+    last_idx = min(4, len(ob.bids) - 1)
+    return ob.bids[0].price - ob.bids[last_idx].price
     
-def offer_range(orderBook):
-    last_idx = min(4, len(orderBook.offers) - 1)
-    return orderBook.offers[last_idx].price - orderBook.offers[0].price
+def offer_range(ob, stats):
+    last_idx = min(4, len(ob.offers) - 1)
+    return ob.offers[last_idx].price - ob.offers[0].price
 
-def bid_slope(ob):
+def bid_slope(ob, stats):
     last_idx = min(4, len(ob.bids) - 1)
     first_price = ob.bids[0].price
     cumulative_vol = 0
@@ -32,7 +32,7 @@ def bid_slope(ob):
       total += delta_p / cumulative_vol 
     return total / (last_idx+1)   
 
-def offer_slope(ob):
+def offer_slope(ob, stats):
     last_idx = min(4, len(ob.offers) - 1)
     first_price = ob.offers[0].price
     cumulative_vol = 0
@@ -44,136 +44,134 @@ def offer_slope(ob):
       total += delta_p / cumulative_vol 
     return total / (last_idx+1) 
   
-def best_bid(orderBook):
-    return orderBook.bids[0].price
+def best_bid(orderBook, stats):
+    return stats.best_bid_price 
 
-def best_offer(orderBook):
-    return orderBook.offers[0].price
+def best_offer(orderBook, stats):
+    return stats.best_offer_price 
+    
+def midprice(orderBook, stats):
+    return (stats.best_offer_price + stats.best_bid_price ) / 2 
 
-def midprice(orderBook):
-    return (orderBook.offers[0].price + orderBook.bids[0].price) / 2 
-
-def total_added_volume(ob):
+def total_added_volume(ob, stats):
     return ob.stats.added_bid_volume  + ob.stats.added_offer_volume
 
 
-def deleted_bid_volume(ob):
-    return ob.stats.filled_bid_volume + ob.stats.canceled_bid_volume
+def deleted_bid_volume(ob, stats):
+    return stats.deleted_bid_volume
 
-def deleted_offer_volume(ob):
-    return ob.stats.filled_offer_volume + ob.stats.canceled_offer_volume
+def deleted_offer_volume(ob, stats):
+    return stats.deleted_offer_volume
         
-def total_deleted_volume(ob):
-    return deleted_bid_volume(ob) + deleted_offer_volume(ob)
+def total_deleted_volume(ob, stats):
+    return stats.deleted_offer_volume + stats.deleted_bid_volume
 
-def net_volume(ob):
+def net_volume(ob, stats):
     return ob.added_bid_volume + ob.added_offer_volume \
       - deleted_bid_volume(ob) - deleted_offer_volume(ob)
       
 
 ## tr8dr's insertion flow 
 
-def bid_tr8dr(ob):
-    return ob.stats.bid_tr8dr
+def bid_tr8dr(ob, stats):
+    return stats.bid_tr8dr
 
-def offer_tr8dr(ob):
-    return ob.stats.offer_tr8dr
+def offer_tr8dr(ob, stats):
+    return stats.offer_tr8dr
 
-def tr8dr(ob):
-    return ob.stats.bid_tr8dr + ob.stats.offer_tr8dr
+def tr8dr(ob, stats):
+    return stats.bid_tr8dr + stats.offer_tr8dr
 
 ## Canceled = deleted from secondary levels 
 
-def canceled_bid_volume(ob):
-    return ob.stats.canceled_bid_volume
+def canceled_bid_volume(ob, stats):
+    return stats.canceled_bid_volume
 
-def canceled_bid_count(ob):
-    return ob.stats.canceled_bid_count
+def canceled_bid_count(ob, stats):
+    return stats.canceled_bid_count
 
-def canceled_offer_volume(ob):
-    return ob.stats.canceled_offer_volume 
+def canceled_offer_volume(ob, stats):
+    return stats.canceled_offer_volume 
 
-def canceled_offer_count(ob):
-    return ob.stats.canceled_offer_count
+def canceled_offer_count(ob, stats):
+    return stats.canceled_offer_count
 
-def total_canceled_volume(ob):
-    return ob.stats.canceled_bid_volume + ob.stats.canceled_offer_volume
+def total_canceled_volume(ob, stats):
+    return stats.canceled_bid_volume + stats.canceled_offer_volume
 
 
 ## Filled = deleted from best level 
 
-def filled_bid_volume(ob):
-    return ob.stats.filled_bid_volume
+def filled_bid_volume(ob, stats):
+    return stats.filled_bid_volume
 
-def filled_bid_count(ob):
-    return ob.stats.filled_bid_count
+def filled_bid_count(ob, stats):
+    return stats.filled_bid_count
 
-def filled_offer_volume(ob):
-    return ob.stats.filled_offer_volume
+def filled_offer_volume(ob, stats):
+    return stats.filled_offer_volume
 
-def filled_offer_count(ob):
-    return ob.stats.filled_offer_count 
+def filled_offer_count(ob, stats):
+    return stats.filled_offer_count 
 
-def total_filled_volume(ob):
-    return ob.stats.filled_bid_volume  + ob.stats.filled_offer_volume
+def total_filled_volume(ob, stats):
+    return stats.filled_bid_volume  + stats.filled_offer_volume
     
-
-
 ## Add 
 
-def added_offer_volume(ob):
-    return ob.stats.added_offer_volume
+def added_offer_volume(ob, stats):
+    return stats.added_offer_volume
 
-def added_offer_count(ob):
-    return ob.stats.added_offer_count
+def added_offer_count(ob, stats):
+    return stats.added_offer_count
 
-def added_bid_volume(ob):
-    return ob.stats.added_bid_volume
+def added_bid_volume(ob, stats):
+    return stats.added_bid_volume
 
-def added_bid_count(ob):
-    return ob.stats.added_bid_count
+def added_bid_count(ob, stats):
+    return stats.added_bid_count
 
 
 
-def added_best_offer_volume(ob):
-    return ob.stats.added_best_offer_volume
+def added_best_offer_volume(ob, stats):
+    return stats.added_best_offer_volume
 
-def added_best_offer_count(ob):
-    return ob.stats.added_best_offer_count
+def added_best_offer_count(ob, stats):
+    return stats.added_best_offer_count
 
-def added_best_bid_volume(ob):
-    return ob.stats.added_best_bid_volume
+def added_best_bid_volume(ob, stats):
+    return stats.added_best_bid_volume
 
-def added_best_bid_count(ob):
-    return ob.stats.added_best_bid_count
+def added_best_bid_count(ob, stats):
+    return stats.added_best_bid_count
 
 ## Delete
-def deleted_offer_volume(ob):
-    return ob.stats.deleted_offer_volume
+def deleted_offer_volume(ob, stats):
+    return stats.deleted_offer_volume
 
-def deleted_offer_count(ob):
-    return ob.stats.deleted_offer_count
+def deleted_offer_count(ob, stats):
+    return stats.deleted_offer_count
 
-def deleted_bid_volume(ob):
-    return ob.stats.deleted_bid_volume
+def deleted_bid_volume(ob, stats):
+    return stats.deleted_bid_volume
 
-def deleted_bid_count(ob):
-    return ob.stats.deleted_bid_count
+def deleted_bid_count(ob, stats):
+    return stats.deleted_bid_count
 
 
 #############
 
-def millisecond_timestamp(orderBook): 
+def millisecond_timestamp(orderBook, stats): 
     return orderBook.lastUpdateTime 
 
-def second_timestamp(orderBook):
+def second_timestamp(orderBook, stats):
     return orderBook.lastUpdateTime / 1000.0
 
-def message_count(orderBook):
+def message_count(orderBook, stats):
     return len(orderBook.actions)
 
 # cache results 
-def bid_volume(orderBook): 
+def bid_volume(orderBook, stats): 
     if hasattr(orderBook, 'bidVolume'): 
         return orderBook.bidVolume 
     else: 
@@ -184,7 +182,7 @@ def bid_volume(orderBook):
       return bidVolume 
 
 # cache results 
-def offer_volume(orderBook): 
+def offer_volume(orderBook, stats): 
     if hasattr(orderBook, 'offerVolume'): 
         return orderBook.offerVolume 
     else: 
@@ -194,14 +192,14 @@ def offer_volume(orderBook):
       orderBook.offerVolume = offerVolume 
       return offerVolume 
 
-def best_offer_volume(orderBook): 
-    return orderBook.offers[0].size
+def best_offer_volume(ob, stats): 
+    return stats.best_offer_volume
 
-def best_bid_volume(orderBook): 
-    return orderBook.bids[0].size 
-
+def best_bid_volume(ob, stats): 
+    return stats.best_bid_volume
+    
 # volume weighted price of first five bids  
-def bid_vwap(ob): 
+def bid_vwap(ob, stats): 
     p = 0
     v = 0  
     i = 0 
@@ -212,7 +210,7 @@ def bid_vwap(ob):
         if i >= 4: break  
     return p / v
 
-def offer_vwap(ob):
+def offer_vwap(ob, stats):
     p = 0 
     v = 0
     i = 0
@@ -223,37 +221,8 @@ def offer_vwap(ob):
       if i >= 4: break 
     return p / v
 
-
-# average of volume weighted offer and bid prices
-def volume_weighted_mid_price(orderBook):
-    bidSum = 0 
-    for order in orderBook.bids: 
-        bidSum += order.price * order.size 
-    bidPrice = bidSum / bid_volume(orderBook)
-
-    offerSum = 0 
-    for order in orderBook.offers:
-        offerSum += order.price * order.size 
-
-    offerPrice = offerSum / offer_volume(orderBook)
-    return (offerPrice + bidPrice) / 2 
-
-def prct_best_offer_volume(orderBook): 
-    return float(orderBook.offers[0].size) / offer_volume(orderBook)
-
-def prct_best_bid_volume(orderBook): 
-    return float(orderBook.bids[0].size) / bid_volume(orderBook)
-
-def log_best_volume_ratio(orderBook):
-    offerVol = orderBook.offers[0].size
-    bidVol = orderBook.bids[0].size
-    if offerVol == 0 or bidVol == 0:
-        return 0         
-    else:
-        return math.log(float(offerVol) / bidVol)
-
-def fraction_of_second(orderBook): 
-    t = millisecond_timestamp(orderBook)
+def fraction_of_second(orderBook, stats): 
+    t = orderBook.lastUpdateTime 
     return (t % 1000.0) / 1000.0
 
 def nth_digit(x,n):
@@ -276,77 +245,4 @@ def nth_digit_tail(x,n):
     if x == 0: return 0
     else: return (x / (10 ** int(math.log10(x) - n))) % 10 
     
-def first_bid_digit(orderBook):
-    return nth_digit(orderBook.bids[0].price, 1)
 
-def first_bid_digit_tail(orderBook):
-    return nth_digit_tail(orderBook.bids[0].price, 1)
-    
-def first_offer_digit(orderBook): 
-    return nth_digit(orderBook.offers[0].price, 1)
-
-def first_offer_digit_tail(orderBook): 
-    return nth_digit_tail(orderBook.offers[0].price, 1)
-
-        
-def second_bid_digit(orderBook):
-    return nth_digit(orderBook.bids[0].price, 2)
-    
-def second_bid_digit_tail(orderBook):
-    return nth_digit_tail(orderBook.bids[0].price, 2)
-
-def second_offer_digit(orderBook): 
-    return nth_digit(orderBook.offers[0].price, 2)
-
-def second_offer_digit_tail(orderBook): 
-    return nth_digit_tail(orderBook.offers[0].price, 2)
-
-def third_bid_digit(orderBook):
-    return nth_digit(orderBook.bids[0].price, 3)
-
-def third_bid_digit_tail(orderBook):
-    return nth_digit_tail(orderBook.bids[0].price, 3)
-
-def third_offer_digit(orderBook): 
-    return nth_digit(orderBook.offers[0].price, 3)
-
-def third_offer_digit_tail(orderBook): 
-    return nth_digit_tail(orderBook.offers[0].price, 3)
-
-def fourth_bid_digit(orderBook):
-    return nth_digit(orderBook.bids[0].price, 4)
-
-def fourth_offer_digit(orderBook): 
-    return nth_digit(orderBook.offers[0].price, 4)
-
-def fourth_offer_digit_tail(orderBook): 
-    return nth_digit_tail(orderBook.offers[0].price, 4)
-
-def digit_close_to_wrap(d , lim=10):
-    mid = lim / 2.0
-    dist = abs(mid - d)
-    return dist / mid
-    
-def first_bid_digit_close_to_wrap(orderBook):
-    return digit_close_to_wrap(nth_digit_tail(orderBook.bids[0].price, 1), lim =10)
-    
-def first_offer_digit_close_to_wrap(orderBook):
-    return digit_close_to_wrap(nth_digit_tail(orderBook.offers[0].price, 1), lim = 10)
-
-def second_bid_digit_close_to_wrap(orderBook):
-    return digit_close_to_wrap(nth_digit_tail(orderBook.bids[0].price, 2), lim = 10)
-    
-def second_offer_digit_close_to_wrap(orderBook):
-    return digit_close_to_wrap(nth_digit_tail(orderBook.offers[0].price, 2), lim = 10)
-
-def third_bid_digit_close_to_wrap(orderBook):
-    return digit_close_to_wrap(nth_digit_tail(orderBook.bids[0].price, 3), lim = 10)
-    
-def third_offer_digit_close_to_wrap(orderBook):
-    return digit_close_to_wrap(nth_digit_tail(orderBook.offers[0].price, 3), lim = 10)
-
-def fourth_bid_digit_close_to_wrap(orderBook):
-    return digit_close_to_wrap(nth_digit_tail(orderBook.bids[0].price, 4), lim = 10)
-    
-def fourth_offer_digit_close_to_wrap(orderBook):
-    return digit_close_to_wrap(nth_digit_tail(orderBook.offers[0].price, 4), lim = 10)
