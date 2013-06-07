@@ -56,5 +56,5 @@ protos :
 	cd $(PROTO) && make 
 
 clean :
-	rm -f *.o tick_subsribe
+	rm -f *.o tick_subscribe
 

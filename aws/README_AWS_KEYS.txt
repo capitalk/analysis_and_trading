@@ -60,3 +60,22 @@ ssh-keygen -b 2048 -t rsa -f aws-key
 
 4) Check key fingerprints with ec2-fingerprint-key (N.B. this will not macth
 ssh-keygen -lf <pubkey.in>
+
+
+
+CREATING DIFFERENT USERS ON EC2 INSTANCE
+
+Have user generate keypair - ssh-keygen -b 2048 -t rsa -f OUTPUTFILENAME
+Send us OUTPUTFILENAME.pub
+scp OUTPUTFILENAME.pub to instance
+cat OUTPUTFILENAME.pub >> /home/ec2-user/.ssh/authorized_keys
+Have user test with ssh -i OUTPUTFILENAME-key ec2-user@HOSTNAME
+
+Admin should ssh to ec2 instance 
+sudo useradd -g ec2-user USERNAME
+sudo su USERNAME
+do keygen (see above) if pubkey not already sent
+chmod 700 /home/USERNAME/.ssh
+cat OUTPUTFILENAME.pub >> /home/USERNAME/.ssh/authorized_keys
+chmod 600 /home/USERNAME/.ssh/authorized_keys
+
